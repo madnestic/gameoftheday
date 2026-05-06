@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>ARCADE.LAB</title>
+<title>gameoftheday</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=JetBrains+Mono:wght@300;400;700&display=swap');
 
@@ -108,95 +108,39 @@
     line-height: 1.6;
   }
 
-  .games-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-    gap: 16px;
+  .landing-center {
     flex: 1;
-    align-content: start;
-  }
-
-  .game-card {
-    border: var(--line) solid var(--ink);
-    padding: 20px;
-    cursor: pointer;
-    background: transparent;
-    color: var(--ink);
-    font-family: inherit;
-    text-align: left;
     display: flex;
     flex-direction: column;
-    gap: 16px;
-    transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
-    position: relative;
-    aspect-ratio: 1 / 1.1;
+    align-items: center;
+    justify-content: center;
+    gap: 36px;
+    text-align: center;
   }
 
-  .game-card:hover, .game-card:active {
+  .landing-title {
+    font-family: 'Major Mono Display', monospace;
+    font-size: clamp(24px, 4.5vw, 40px);
+    line-height: 1;
+    letter-spacing: -0.02em;
+  }
+
+  .play-btn {
+    background: transparent;
+    border: var(--line) solid var(--ink);
+    color: var(--ink);
+    font-family: 'Major Mono Display', monospace;
+    font-size: clamp(22px, 4vw, 32px);
+    letter-spacing: 0.05em;
+    padding: 18px 56px;
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+  }
+
+  .play-btn:hover, .play-btn:active {
     background: var(--ink);
     color: var(--bg);
     transform: translate(-2px, -2px);
-  }
-
-  .game-card:hover .card-preview rect,
-  .game-card:hover .card-preview line,
-  .game-card:hover .card-preview circle {
-    stroke: var(--bg);
-  }
-
-  .card-num {
-    font-size: 10px;
-    letter-spacing: 0.3em;
-    opacity: 0.6;
-  }
-
-  .card-preview {
-    flex: 1;
-    width: 100%;
-    border: var(--line) solid currentColor;
-  }
-
-  .card-preview svg {
-    width: 100%;
-    height: 100%;
-    display: block;
-  }
-
-  .card-title {
-    font-family: 'Major Mono Display', monospace;
-    font-size: 22px;
-    letter-spacing: -0.02em;
-    line-height: 1;
-  }
-
-  .card-meta {
-    display: flex;
-    justify-content: space-between;
-    font-size: 9px;
-    letter-spacing: 0.25em;
-    opacity: 0.7;
-  }
-
-  .game-card.locked {
-    cursor: not-allowed;
-    opacity: 0.35;
-  }
-
-  .game-card.locked:hover {
-    background: transparent;
-    color: var(--ink);
-    transform: none;
-  }
-
-  .locked-stamp {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    transform: translate(-50%, -50%) rotate(-12deg);
-    border: var(--line) solid currentColor;
-    padding: 4px 10px;
-    font-size: 10px;
-    letter-spacing: 0.3em;
   }
 
   /* ============ GAME SCREEN ============ */
@@ -359,8 +303,6 @@
   @media (max-width: 600px) {
     .hub { padding: 20px 16px; }
     .hub-header { margin-bottom: 28px; }
-    .games-grid { grid-template-columns: 1fr; }
-    .game-card { aspect-ratio: 16 / 10; }
     .hud { gap: 12px; }
     .hud-val { font-size: 14px; }
     .game-title-bar { display: none; }
@@ -371,81 +313,9 @@
 
 <!-- ============ HUB ============ -->
 <div class="hub" id="hub">
-  <div class="hub-header">
-    <div>
-      <div class="logo">arcade.lab</div>
-      <div class="logo-sub">EST · 2026</div>
-    </div>
-    <div class="hub-meta">
-      VOL · 01<br>
-      ROOM · 001
-    </div>
-  </div>
-
-  <h1 class="hub-title">play<span class="slash">/</span>think</h1>
-  <div class="hub-tagline">A small collection of single-screen browser games. No downloads. No accounts. Just play.</div>
-
-  <div class="games-grid" id="gamesGrid">
-    <!-- Pongonoid -->
-    <button class="game-card" data-game="pongonoid">
-      <div class="card-num">№ 01</div>
-      <div class="card-preview">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-          <line x1="10" y1="15" x2="30" y2="15" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-          <line x1="70" y1="85" x2="90" y2="85" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
-          <rect x="35" y="40" width="10" height="6" fill="none" stroke="currentColor" stroke-width="1"/>
-          <rect x="48" y="40" width="10" height="6" fill="none" stroke="currentColor" stroke-width="1"/>
-          <rect x="61" y="40" width="10" height="6" fill="none" stroke="currentColor" stroke-width="1"/>
-          <rect x="35" y="48" width="10" height="6" fill="none" stroke="currentColor" stroke-width="1"/>
-          <rect x="48" y="48" width="10" height="6" fill="none" stroke="currentColor" stroke-width="1"/>
-          <rect x="61" y="48" width="10" height="6" fill="none" stroke="currentColor" stroke-width="1"/>
-          <circle cx="25" cy="28" r="2.5" fill="none" stroke="currentColor" stroke-width="1.2"/>
-          <circle cx="75" cy="72" r="2.5" fill="none" stroke="currentColor" stroke-width="1.2"/>
-        </svg>
-      </div>
-      <div>
-        <div class="card-title">pongonoid</div>
-      </div>
-      <div class="card-meta">
-        <span>1P · VS CPU</span>
-        <span>MOUSE</span>
-      </div>
-    </button>
-
-    <!-- Placeholder cards -->
-    <button class="game-card locked">
-      <div class="card-num">№ 02</div>
-      <div class="card-preview">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-          <circle cx="50" cy="50" r="20" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
-        </svg>
-      </div>
-      <div>
-        <div class="card-title">_ _ _ _</div>
-      </div>
-      <div class="card-meta">
-        <span>SOON</span>
-        <span>—</span>
-      </div>
-      <div class="locked-stamp">LOCKED</div>
-    </button>
-
-    <button class="game-card locked">
-      <div class="card-num">№ 03</div>
-      <div class="card-preview">
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none">
-          <rect x="30" y="30" width="40" height="40" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="3 3"/>
-        </svg>
-      </div>
-      <div>
-        <div class="card-title">_ _ _ _</div>
-      </div>
-      <div class="card-meta">
-        <span>SOON</span>
-        <span>—</span>
-      </div>
-      <div class="locked-stamp">LOCKED</div>
-    </button>
+  <div class="landing-center">
+    <div class="landing-title">gameoftheday</div>
+    <button class="play-btn" data-game="pongonoid">▸ PLAY</button>
   </div>
 
   <div class="footer">
@@ -495,9 +365,9 @@ const hub = document.getElementById('hub');
 const gameScreen = document.getElementById('gameScreen');
 const backBtn = document.getElementById('backBtn');
 
-document.querySelectorAll('.game-card[data-game]').forEach(card => {
-  card.addEventListener('click', () => {
-    const game = card.dataset.game;
+document.querySelectorAll('[data-game]').forEach(el => {
+  el.addEventListener('click', () => {
+    const game = el.dataset.game;
     if (game === 'pongonoid') {
       hub.classList.add('hidden');
       gameScreen.classList.add('active');
@@ -538,6 +408,9 @@ const Pongonoid = (() => {
   const BLOCK_OFFSET_X = (W - COLS * (BLOCK_W + BLOCK_GAP) + BLOCK_GAP) / 2;
 
   const BLOCK_ROW_INTERVAL = 14000; // ms — new rows added in the center
+  const SPLITTER_THRESHOLD = 200;   // splitter blocks start appearing once anyone hits this score
+  const SPLITTER_INTERVAL  = 10000; // ms — once threshold is met, convert one block at this rate
+  const MAX_BALLS = 8;              // hard cap so splitters can't explode the field
 
   // ---- Sound (Web Audio) ----
   let audioCtx = null;
@@ -636,23 +509,26 @@ const Pongonoid = (() => {
                             : PADDLE_MARGIN + PADDLE_H + BALL_R + 4,
       vx: Math.sin(angle) * speed,
       vy: Math.cos(angle) * speed * dir,
-      owner: side,       // who launched it
-      lastHitBy: side,   // who paddled it most recently (starts as owner)
+      owner: side,        // who launched it
+      lastHitBy: side,    // who paddled it most recently (starts as owner)
       stuck: true,
+      disposable: false,  // originals respawn on out; clones are disposable
     };
   }
 
   function buildInitialBlocks() {
-    // Two rows of blocks in the middle, mirrored.
+    // Two rows of blocks on each side, separated by a single BLOCK_GAP at the midline.
+    // Splitter status is decided separately (periodically, after threshold).
     const blocks = [];
     const midY = H / 2;
-    for (let r = 0; r < 2; r++) {
-      // upper row (belongs to top half)
-      blocks.push(...rowBlocks(midY - BLOCK_H * 2 + r * (BLOCK_H + BLOCK_GAP)));
-    }
-    for (let r = 0; r < 2; r++) {
-      blocks.push(...rowBlocks(midY + r * (BLOCK_H + BLOCK_GAP)));
-    }
+    const bottomRow0 = midY + BLOCK_GAP / 2;
+    const bottomRow1 = bottomRow0 + BLOCK_H + BLOCK_GAP;
+    const topRow0 = midY - BLOCK_GAP / 2 - BLOCK_H;
+    const topRow1 = topRow0 - BLOCK_H - BLOCK_GAP;
+    blocks.push(...rowBlocks(topRow1));
+    blocks.push(...rowBlocks(topRow0));
+    blocks.push(...rowBlocks(bottomRow0));
+    blocks.push(...rowBlocks(bottomRow1));
     return blocks;
   }
 
@@ -665,6 +541,7 @@ const Pongonoid = (() => {
         w: BLOCK_W,
         h: BLOCK_H,
         alive: true,
+        splitter: false,
       });
     }
     return arr;
@@ -703,6 +580,7 @@ const Pongonoid = (() => {
       blocks: buildInitialBlocks(),
       popups: [],
       lastRowTime: 0,
+      lastSplitterTime: 0,
       gameTime: 0,
       mouseX: W / 2,
       mouseTargetX: W / 2,
@@ -816,8 +694,13 @@ const Pongonoid = (() => {
       }
     });
 
+    // Snapshot the ball list so cloned balls (added by splitter blocks) don't
+    // get processed in the same frame — otherwise one hit can cascade into
+    // many splits at once. Clones we push during this loop will be picked up
+    // on the next frame.
+    const ballsThisFrame = state.balls.slice();
     // Update balls
-    for (const ball of state.balls) {
+    for (const ball of ballsThisFrame) {
       if (ball.stuck) {
         // stick to its paddle
         const pad = ball.owner === 'player' ? state.player : state.cpu;
@@ -856,6 +739,23 @@ const Pongonoid = (() => {
           const fromBottom = prevY - BALL_R >= b.y + b.h;
           if (fromTop || fromBottom) ball.vy *= -1;
           else ball.vx *= -1;
+
+          // Splitter block: spawn a one-shot clone heading the other way.
+          // Clones are disposable — they don't respawn when they fly out.
+          if (b.splitter && state.balls.length < MAX_BALLS) {
+            state.balls.push({
+              x: ball.x,
+              y: ball.y,
+              vx: -ball.vx,
+              vy: ball.vy,
+              owner: ball.owner,
+              lastHitBy: ball.lastHitBy,
+              stuck: false,
+              disposable: true,
+            });
+            // a brighter, higher chime so splits feel rewarding
+            playDrop(pitchForY(b.y) * 1.5, 0.18, 0.22, 1.8);
+          }
           break;
         }
       }
@@ -904,7 +804,7 @@ const Pongonoid = (() => {
           awardPoints('player', 100, ball.x, 30);
           soundScore();
         }
-        respawnBall(ball);
+        retireBall(ball);
       } else if (ball.y > H + BALL_R) {
         const shooter = ball.lastHitBy;
         if (shooter === 'player') {
@@ -914,8 +814,13 @@ const Pongonoid = (() => {
           awardPoints('cpu', 100, ball.x, H - 30);
           soundScore();
         }
-        respawnBall(ball);
+        retireBall(ball);
       }
+    }
+
+    // Drop any disposable balls that flew out this frame.
+    if (state.balls.some(b => b.removed)) {
+      state.balls = state.balls.filter(b => !b.removed);
     }
 
     // Update popups (fade & rise)
@@ -930,6 +835,21 @@ const Pongonoid = (() => {
       state.lastRowTime = state.gameTime;
       addRow();
     }
+
+    // Once either side is past the threshold, periodically promote a single
+    // random alive (non-splitter) block to a splitter — one at a time.
+    const passedThreshold = Math.max(state.player.score, state.cpu.score) >= SPLITTER_THRESHOLD;
+    if (passedThreshold && state.gameTime - state.lastSplitterTime > SPLITTER_INTERVAL) {
+      state.lastSplitterTime = state.gameTime;
+      promoteSplitter();
+    }
+  }
+
+  function promoteSplitter() {
+    const candidates = state.blocks.filter(b => b.alive && !b.splitter);
+    if (!candidates.length) return;
+    const pick = candidates[Math.floor(Math.random() * candidates.length)];
+    pick.splitter = true;
   }
 
   function pickBallForCPU() {
@@ -974,8 +894,8 @@ const Pongonoid = (() => {
       return true;
     });
 
-    // Add the two new rows centered on the midline
-    const topRowY = midY - BLOCK_H - BLOCK_GAP / 2;
+    // Add the two new rows centered on the midline (same gap as everywhere else)
+    const topRowY = midY - BLOCK_GAP / 2 - BLOCK_H;
     const bottomRowY = midY + BLOCK_GAP / 2;
     state.blocks.push(...rowBlocks(topRowY));
     state.blocks.push(...rowBlocks(bottomRowY));
@@ -991,6 +911,16 @@ const Pongonoid = (() => {
         }
       }
     }
+  }
+
+  function retireBall(ball) {
+    // Disposable clones (from splitters) just vanish; the two original balls
+    // get respawned on the side that needs one most.
+    if (ball.disposable) {
+      ball.removed = true;
+      return;
+    }
+    respawnBall(ball);
   }
 
   function respawnBall(ball) {
@@ -1036,19 +966,32 @@ const Pongonoid = (() => {
     ctx.strokeStyle = '#000000';
     ctx.lineWidth = 1.5;
 
-    // Blocks — CPU side (top half) filled black, player side (bottom half) outlined
+    // Blocks — CPU side (top half) filled black, player side (bottom half) outlined.
+    // Splitter blocks carry an "x" mark so the player can spot them from afar.
     const midY = H / 2;
     ctx.lineWidth = 1;
     for (const b of state.blocks) {
       if (!b.alive) continue;
       const blockMid = b.y + b.h / 2;
-      if (blockMid < midY) {
-        // CPU side: solid fill
+      const onCpuSide = blockMid < midY;
+      if (onCpuSide) {
         ctx.fillStyle = '#000000';
         ctx.fillRect(b.x, b.y, b.w, b.h);
       } else {
-        // Player side: outline only
         ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
+      }
+      if (b.splitter) {
+        const cx = b.x + b.w / 2;
+        const cy = b.y + b.h / 2;
+        const r = 5;
+        ctx.save();
+        ctx.strokeStyle = onCpuSide ? '#ffffff' : '#000000';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r);
+        ctx.moveTo(cx + r, cy - r); ctx.lineTo(cx - r, cy + r);
+        ctx.stroke();
+        ctx.restore();
       }
     }
 
