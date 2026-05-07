@@ -684,12 +684,25 @@ const Pongonoid = (() => {
   // Touch zone extends to the whole canvas-wrap. On phones the canvas is
   // letter-/pillar-boxed inside the wrap, so a finger dragging in the empty
   // space (especially below the playfield) still controls the paddle and
-  // doesn't cover it. getCanvasX clamps via the canvas bounding rect, and
-  // the paddle is clamped to the playfield in step().
+  // doesn't cover it.
+  //
+  // Important: while the start/pause overlay is visible (running === false),
+  // we must NOT preventDefault — otherwise tapping the START button on the
+  // overlay would have its synthesized click cancelled and nothing happens.
   const canvasWrap = canvas.parentElement;
-  canvasWrap.addEventListener('touchmove', onMove, { passive: false });
-  canvasWrap.addEventListener('touchstart', (e) => { onMove(e); }, { passive: false });
-  canvasWrap.addEventListener('touchend', (e) => { e.preventDefault(); onClick(); }, { passive: false });
+  canvasWrap.addEventListener('touchmove', (e) => {
+    if (!running) return;
+    onMove(e);
+  }, { passive: false });
+  canvasWrap.addEventListener('touchstart', (e) => {
+    if (!running) return;
+    onMove(e);
+  }, { passive: false });
+  canvasWrap.addEventListener('touchend', (e) => {
+    if (!running) return;
+    e.preventDefault();
+    onClick();
+  }, { passive: false });
 
   // ---- Game Loop ----
   function step(dt) {
