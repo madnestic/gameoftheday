@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>gameoftheday</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Major+Mono+Display&family=JetBrains+Mono:wght@300;400;700&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Abyssinica+SIL&family=Anton&family=Caveat:wght@500;700&family=Major+Mono+Display&family=JetBrains+Mono:wght@300;400;700&display=swap');
 
   :root {
     --bg: #ffffff;
@@ -114,25 +114,49 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 36px;
+    gap: 22px;
     text-align: center;
   }
 
+  .title-stamp {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.45em;
+    opacity: 0.55;
+    text-transform: uppercase;
+  }
+
+  .title-ornament {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.6em;
+    opacity: 0.55;
+    margin-bottom: -6px;
+  }
+
   .landing-title {
-    font-family: 'Major Mono Display', monospace;
-    font-size: clamp(24px, 4.5vw, 40px);
+    font-family: 'Abyssinica SIL', serif;
+    font-weight: 400;
+    font-size: clamp(46px, 9vw, 84px);
     line-height: 1;
-    letter-spacing: -0.02em;
+    letter-spacing: 0.005em;
+  }
+
+  .title-rule {
+    width: 64px;
+    height: 1px;
+    background: var(--ink);
+    opacity: 0.5;
   }
 
   .play-btn {
     background: transparent;
     border: var(--line) solid var(--ink);
     color: var(--ink);
-    font-family: 'Major Mono Display', monospace;
-    font-size: clamp(22px, 4vw, 32px);
-    letter-spacing: 0.05em;
-    padding: 18px 56px;
+    font-family: 'Anton', 'Bebas Neue', sans-serif;
+    font-size: clamp(30px, 5.5vw, 46px);
+    letter-spacing: 0.18em;
+    padding: 14px 64px 12px;
     cursor: pointer;
     transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
   }
@@ -142,6 +166,87 @@
     color: var(--bg);
     transform: translate(-2px, -2px);
   }
+
+  .landing-tagline {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.4em;
+    opacity: 0.5;
+    text-transform: uppercase;
+  }
+
+  /* Floating decorations */
+  .corner-meta {
+    position: fixed;
+    top: 26px;
+    right: 26px;
+    text-align: right;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 0.4em;
+    line-height: 1.7;
+    opacity: 0.55;
+    z-index: 4;
+    pointer-events: none;
+  }
+
+  .corner-meta .num {
+    font-family: 'Abyssinica SIL', serif;
+    font-size: 22px;
+    letter-spacing: 0;
+    display: block;
+    margin-top: 4px;
+    opacity: 0.85;
+  }
+
+  .signature {
+    position: fixed;
+    bottom: 18px;
+    right: 26px;
+    font-family: 'Caveat', cursive;
+    font-weight: 500;
+    font-size: 26px;
+    line-height: 1;
+    opacity: 0.6;
+    z-index: 4;
+    pointer-events: none;
+    text-decoration: none;
+  }
+
+  .signature .by {
+    display: block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.4em;
+    text-transform: uppercase;
+    opacity: 0.7;
+    margin-bottom: 2px;
+    line-height: 1;
+  }
+
+  .side-rules {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    letter-spacing: 0.4em;
+    opacity: 0.4;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    z-index: 4;
+    pointer-events: none;
+  }
+  .side-rules.left  { left: 16px; }
+  .side-rules.right { right: 16px; }
+
+  /* Hide decorations once we leave the hub */
+  .game-screen.active ~ .corner-meta,
+  .game-screen.active ~ .signature,
+  .game-screen.active ~ .side-rules { display: none; }
+  .hub.hidden ~ .corner-meta,
+  .hub.hidden ~ .signature,
+  .hub.hidden ~ .side-rules { display: none; }
 
   /* ============ GAME SCREEN ============ */
   .game-screen {
@@ -314,13 +419,17 @@
 <!-- ============ HUB ============ -->
 <div class="hub" id="hub">
   <div class="landing-center">
-    <div class="landing-title">gameoftheday</div>
-    <button class="play-btn" data-game="pongonoid">▸ PLAY</button>
+    <div class="title-stamp">edition · pongonoid</div>
+    <div class="title-ornament">· · · · ·</div>
+    <h1 class="landing-title">gameoftheday</h1>
+    <div class="title-rule"></div>
+    <button class="play-btn" data-game="pongonoid">play</button>
+    <div class="landing-tagline">no downloads · no accounts · no ads</div>
   </div>
 
   <div class="footer">
-    <span>BUILT FOR THE BROWSER</span>
-    <span>NO ACCOUNTS · NO ADS</span>
+    <span>built for the browser</span>
+    <span>mmxxvi</span>
   </div>
 </div>
 
@@ -356,6 +465,15 @@
     </div>
   </div>
 </div>
+
+<!-- floating decorations (siblings — hidden via CSS once game starts) -->
+<div class="corner-meta">
+  vol · 01<br>
+  edition<span class="num">№ 01</span>
+</div>
+<div class="side-rules left">no input lag · no nonsense</div>
+<div class="side-rules right">single screen · single hand</div>
+<div class="signature"><span class="by">made by</span>seksykotik</div>
 
 <script>
 'use strict';
