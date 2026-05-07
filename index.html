@@ -408,9 +408,22 @@ const Pongonoid = (() => {
   const BLOCK_OFFSET_X = (W - COLS * (BLOCK_W + BLOCK_GAP) + BLOCK_GAP) / 2;
 
   const BLOCK_ROW_INTERVAL = 14000; // ms — new rows added in the center
-  const SPLITTER_THRESHOLD = 200;   // splitter blocks start appearing once anyone hits this score
-  const SPLITTER_INTERVAL  = 10000; // ms — once threshold is met, convert one block at this rate
+  const SPECIAL_THRESHOLD  = 200;   // power-up blocks start appearing once anyone hits this score
+  const SPECIAL_INTERVAL   = 7000;  // ms — once threshold is met, promote one block at this rate
   const MAX_BALLS = 8;              // hard cap so splitters can't explode the field
+
+  // Power-up tunables
+  const PADDLE_SECTION  = PADDLE_W / 4;          // width of one paddle "division"
+  const PADDLE_DELTA    = PADDLE_SECTION * 2;    // ±2 sections per extend/shrink
+  const PADDLE_MIN      = PADDLE_SECTION * 2;    // never go below 2 sections
+  const PADDLE_MAX      = PADDLE_W + PADDLE_DELTA;
+  const EXTEND_DURATION = 8000; // ms
+  const SHRINK_DURATION = 8000; // ms
+  const SHIELD_DURATION = 6000; // ms
+  const ARMOR_DURATION  = 8000; // ms
+
+  // All special block types — promoted at random from this list.
+  const SPECIAL_TYPES = ['splitter', 'extend', 'shrink', 'shield', 'armor'];
 
   // ---- Sound (Web Audio) ----
   let audioCtx = null;
@@ -488,14 +501,23 @@ const Pongonoid = (() => {
   let running = false;
 
   function resizeCanvas() {
+    // Render at the native pixel density so the canvas stays crisp on
+    // high-DPI / scaled-up desktop displays. We keep drawing in logical
+    // 480×720 coordinates by applying the combined scale on the context.
     const wrap = canvas.parentElement;
     const maxW = wrap.clientWidth - 24;
     const maxH = wrap.clientHeight - 24;
     const scale = Math.min(maxW / W, maxH / H);
-    canvas.style.width = (W * scale) + 'px';
-    canvas.style.height = (H * scale) + 'px';
-    canvas.width = W;
-    canvas.height = H;
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = W * scale;
+    const cssH = H * scale;
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    // 1 logical unit -> scale*dpr device pixels
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+    ctx.imageSmoothingEnabled = false;
   }
 
   function makeBall(side) {
@@ -541,23 +563,24 @@ const Pongonoid = (() => {
         w: BLOCK_W,
         h: BLOCK_H,
         alive: true,
-        splitter: false,
+        type: 'normal', // 'normal' | 'splitter' | 'extend' | 'shrink' | 'shield' | 'armor'
+        armor: 0,       // extra hits required (currently 0 or 1)
       });
     }
     return arr;
   }
 
+  // Curated for legibility on the white playfield — pale colors (yellow,
+  // lime, cyan, teal, bubblegum) were dropped because they wash out.
   const PLAYER_COLORS = [
     '#ff2e6e', // hot pink
-    '#ff6b00', // orange
-    '#ffd400', // yellow
-    '#7cff3a', // lime
-    '#00d4ff', // cyan
-    '#1f6bff', // electric blue
+    '#e54a00', // deep orange
+    '#d62828', // deep red
+    '#c2185b', // magenta
     '#9b51ff', // purple
-    '#ff3a3a', // red
-    '#00e5a0', // teal
-    '#ff9ed1', // bubblegum
+    '#6a1b9a', // deep violet
+    '#1f6bff', // electric blue
+    '#2e7d32', // forest green
   ];
 
   function pickPlayerColor() {
@@ -570,17 +593,26 @@ const Pongonoid = (() => {
         x: W / 2 - PADDLE_W / 2,
         y: H - PADDLE_MARGIN - PADDLE_H,
         score: 0,
+        paddleW: PADDLE_W,
+        paddleEffectUntil: 0,   // gameTime when extend/shrink ends
+        shieldUntil: 0,         // gameTime when goal-line shield ends
       },
       cpu: {
         x: W / 2 - PADDLE_W / 2,
         y: PADDLE_MARGIN,
         score: 0,
+        paddleW: PADDLE_W,
+        paddleEffectUntil: 0,
+        shieldUntil: 0,
       },
+      // Armor active until (per side); blocks on that side get armor=1 when
+      // the effect is applied (and any new ones added during the window too).
+      armorExpiresAt: { player: 0, cpu: 0 },
       balls: [makeBall('player'), makeBall('cpu')],
       blocks: buildInitialBlocks(),
       popups: [],
       lastRowTime: 0,
-      lastSplitterTime: 0,
+      lastSpecialTime: 0,
       gameTime: 0,
       mouseX: W / 2,
       mouseTargetX: W / 2,
@@ -645,20 +677,32 @@ const Pongonoid = (() => {
     });
   }
 
+  // Mouse stays on the canvas itself — no finger-blocking issue on desktop.
   canvas.addEventListener('mousemove', onMove);
-  canvas.addEventListener('touchmove', onMove, { passive: false });
-  canvas.addEventListener('touchstart', (e) => { onMove(e); }, { passive: false });
   canvas.addEventListener('click', onClick);
-  canvas.addEventListener('touchend', (e) => { e.preventDefault(); onClick(); }, { passive: false });
+
+  // Touch zone extends to the whole canvas-wrap. On phones the canvas is
+  // letter-/pillar-boxed inside the wrap, so a finger dragging in the empty
+  // space (especially below the playfield) still controls the paddle and
+  // doesn't cover it. getCanvasX clamps via the canvas bounding rect, and
+  // the paddle is clamped to the playfield in step().
+  const canvasWrap = canvas.parentElement;
+  canvasWrap.addEventListener('touchmove', onMove, { passive: false });
+  canvasWrap.addEventListener('touchstart', (e) => { onMove(e); }, { passive: false });
+  canvasWrap.addEventListener('touchend', (e) => { e.preventDefault(); onClick(); }, { passive: false });
 
   // ---- Game Loop ----
   function step(dt) {
     if (state.result) return;
     state.gameTime += dt;
 
+    // Expire any timed power-ups that have run out this frame
+    expireEffects();
+
     // Player paddle follows mouse smoothly
-    state.player.x += (state.mouseTargetX - PADDLE_W / 2 - state.player.x) * 0.35;
-    state.player.x = Math.max(0, Math.min(W - PADDLE_W, state.player.x));
+    const playerW = state.player.paddleW;
+    state.player.x += (state.mouseTargetX - playerW / 2 - state.player.x) * 0.35;
+    state.player.x = Math.max(0, Math.min(W - playerW, state.player.x));
 
     // CPU paddle: track its own ball (the one moving toward it) with imperfect aim
     const cpuBall = pickBallForCPU();
@@ -669,22 +713,23 @@ const Pongonoid = (() => {
       if (state.cpu.lastBallVy === undefined) state.cpu.lastBallVy = 0;
 
       // when ball reverses direction (after a bounce), commit to a new aim point
+      const cpuW = state.cpu.paddleW;
       if (cpuBall.vy !== undefined && Math.sign(cpuBall.vy) !== Math.sign(state.cpu.lastBallVy)) {
         // pick a new offset: anywhere from -45% to +45% of paddle width
-        state.cpu.aimOffset = (Math.random() - 0.5) * PADDLE_W * 0.9;
+        state.cpu.aimOffset = (Math.random() - 0.5) * cpuW * 0.9;
       }
       state.cpu.lastBallVy = cpuBall.vy || 0;
 
       // small continuous drift so the paddle is never perfectly still on the target
       state.cpu.aimOffset += (Math.random() - 0.5) * 0.8;
-      state.cpu.aimOffset = Math.max(-PADDLE_W * 0.45, Math.min(PADDLE_W * 0.45, state.cpu.aimOffset));
+      state.cpu.aimOffset = Math.max(-cpuW * 0.45, Math.min(cpuW * 0.45, state.cpu.aimOffset));
 
-      const target = cpuBall.x - PADDLE_W / 2 + state.cpu.aimOffset;
+      const target = cpuBall.x - cpuW / 2 + state.cpu.aimOffset;
       const speed = 3.6; // slightly slower than before so the offset matters
       const diff = target - state.cpu.x;
       const move = Math.max(-speed, Math.min(speed, diff));
       state.cpu.x += move;
-      state.cpu.x = Math.max(0, Math.min(W - PADDLE_W, state.cpu.x));
+      state.cpu.x = Math.max(0, Math.min(W - cpuW, state.cpu.x));
     }
 
     // CPU launches its stuck ball after a short delay
@@ -704,7 +749,7 @@ const Pongonoid = (() => {
       if (ball.stuck) {
         // stick to its paddle
         const pad = ball.owner === 'player' ? state.player : state.cpu;
-        ball.x = pad.x + PADDLE_W / 2;
+        ball.x = pad.x + pad.paddleW / 2;
         continue;
       }
       ball.x += ball.vx;
@@ -719,6 +764,21 @@ const Pongonoid = (() => {
         if (!b.alive) continue;
         if (ball.x + BALL_R > b.x && ball.x - BALL_R < b.x + b.w &&
             ball.y + BALL_R > b.y && ball.y - BALL_R < b.y + b.h) {
+          // Always bounce — geometry is the same whether or not the block dies.
+          const prevY = ball.y - ball.vy;
+          const fromTop = prevY + BALL_R <= b.y;
+          const fromBottom = prevY - BALL_R >= b.y + b.h;
+          if (fromTop || fromBottom) ball.vy *= -1;
+          else ball.vx *= -1;
+
+          // Armored block: chip the armor, no points, no kill.
+          if (b.armor > 0) {
+            b.armor = 0;
+            // duller chime than a regular break so it reads as "tough hit"
+            playDrop(pitchForY(b.y) * 0.7, 0.18, 0.20, 0.9);
+            break;
+          }
+
           b.alive = false;
           soundBlock(b.y);
           //  - The one who last hit the ball always gets the standard +10.
@@ -733,29 +793,8 @@ const Pongonoid = (() => {
             awardPoints(ball.owner, 20, cx, cy - 14);
           }
 
-          // determine which side to bounce based on previous position
-          const prevY = ball.y - ball.vy;
-          const fromTop = prevY + BALL_R <= b.y;
-          const fromBottom = prevY - BALL_R >= b.y + b.h;
-          if (fromTop || fromBottom) ball.vy *= -1;
-          else ball.vx *= -1;
-
-          // Splitter block: spawn a one-shot clone heading the other way.
-          // Clones are disposable — they don't respawn when they fly out.
-          if (b.splitter && state.balls.length < MAX_BALLS) {
-            state.balls.push({
-              x: ball.x,
-              y: ball.y,
-              vx: -ball.vx,
-              vy: ball.vy,
-              owner: ball.owner,
-              lastHitBy: ball.lastHitBy,
-              stuck: false,
-              disposable: true,
-            });
-            // a brighter, higher chime so splits feel rewarding
-            playDrop(pitchForY(b.y) * 1.5, 0.18, 0.22, 1.8);
-          }
+          // Apply the special effect, if any.
+          applySpecial(b, ball, scorer);
           break;
         }
       }
@@ -766,13 +805,14 @@ const Pongonoid = (() => {
         { p: state.cpu, side: 'top', who: 'cpu' },
       ];
       for (const { p, side, who } of paddles) {
-        if (ball.x + BALL_R > p.x && ball.x - BALL_R < p.x + PADDLE_W &&
+        const pw = p.paddleW;
+        if (ball.x + BALL_R > p.x && ball.x - BALL_R < p.x + pw &&
             ball.y + BALL_R > p.y && ball.y - BALL_R < p.y + PADDLE_H) {
           // only bounce if ball moving toward this paddle
           if (side === 'bottom' && ball.vy > 0) {
             ball.y = p.y - BALL_R;
             ball.vy *= -1;
-            const rel = (ball.x - (p.x + PADDLE_W / 2)) / (PADDLE_W / 2);
+            const rel = (ball.x - (p.x + pw / 2)) / (pw / 2);
             const speed = Math.hypot(ball.vx, ball.vy);
             const angle = rel * 1.0;
             ball.vx = Math.sin(angle) * speed;
@@ -782,7 +822,7 @@ const Pongonoid = (() => {
           } else if (side === 'top' && ball.vy < 0) {
             ball.y = p.y + PADDLE_H + BALL_R;
             ball.vy *= -1;
-            const rel = (ball.x - (p.x + PADDLE_W / 2)) / (PADDLE_W / 2);
+            const rel = (ball.x - (p.x + pw / 2)) / (pw / 2);
             const speed = Math.hypot(ball.vx, ball.vy);
             const angle = rel * 1.0;
             ball.vx = Math.sin(angle) * speed;
@@ -793,28 +833,40 @@ const Pongonoid = (() => {
         }
       }
 
-      // Out of bounds — scoring event
+      // Out of bounds — scoring event (or shield rebound)
       if (ball.y < -BALL_R) {
-        // Ball passed CPU's paddle (top)
-        const shooter = ball.lastHitBy;
-        if (shooter === 'cpu') {
-          awardPoints('cpu', -50, ball.x, 30);
-          soundPenalty();
+        // Crossing the CPU's goal line. Shield bounces the ball back instead.
+        if (state.cpu.shieldUntil > state.gameTime) {
+          ball.y = BALL_R + 1;
+          ball.vy = Math.abs(ball.vy);
+          soundWall(ball.y);
         } else {
-          awardPoints('player', 100, ball.x, 30);
-          soundScore();
+          const shooter = ball.lastHitBy;
+          if (shooter === 'cpu') {
+            awardPoints('cpu', -50, ball.x, 30);
+            soundPenalty();
+          } else {
+            awardPoints('player', 100, ball.x, 30);
+            soundScore();
+          }
+          retireBall(ball);
         }
-        retireBall(ball);
       } else if (ball.y > H + BALL_R) {
-        const shooter = ball.lastHitBy;
-        if (shooter === 'player') {
-          awardPoints('player', -50, ball.x, H - 30);
-          soundPenalty();
+        if (state.player.shieldUntil > state.gameTime) {
+          ball.y = H - BALL_R - 1;
+          ball.vy = -Math.abs(ball.vy);
+          soundWall(ball.y);
         } else {
-          awardPoints('cpu', 100, ball.x, H - 30);
-          soundScore();
+          const shooter = ball.lastHitBy;
+          if (shooter === 'player') {
+            awardPoints('player', -50, ball.x, H - 30);
+            soundPenalty();
+          } else {
+            awardPoints('cpu', 100, ball.x, H - 30);
+            soundScore();
+          }
+          retireBall(ball);
         }
-        retireBall(ball);
       }
     }
 
@@ -837,19 +889,100 @@ const Pongonoid = (() => {
     }
 
     // Once either side is past the threshold, periodically promote a single
-    // random alive (non-splitter) block to a splitter — one at a time.
-    const passedThreshold = Math.max(state.player.score, state.cpu.score) >= SPLITTER_THRESHOLD;
-    if (passedThreshold && state.gameTime - state.lastSplitterTime > SPLITTER_INTERVAL) {
-      state.lastSplitterTime = state.gameTime;
-      promoteSplitter();
+    // random alive normal block to one of the special types.
+    const passedThreshold = Math.max(state.player.score, state.cpu.score) >= SPECIAL_THRESHOLD;
+    if (passedThreshold && state.gameTime - state.lastSpecialTime > SPECIAL_INTERVAL) {
+      state.lastSpecialTime = state.gameTime;
+      promoteSpecial();
     }
   }
 
-  function promoteSplitter() {
-    const candidates = state.blocks.filter(b => b.alive && !b.splitter);
+  function promoteSpecial() {
+    const candidates = state.blocks.filter(b => b.alive && b.type === 'normal' && b.armor === 0);
     if (!candidates.length) return;
     const pick = candidates[Math.floor(Math.random() * candidates.length)];
-    pick.splitter = true;
+    pick.type = SPECIAL_TYPES[Math.floor(Math.random() * SPECIAL_TYPES.length)];
+  }
+
+  // ---- Power-up effects ----
+  function applySpecial(block, ball, scorer) {
+    const opponent = scorer === 'player' ? 'cpu' : 'player';
+    switch (block.type) {
+      case 'splitter':
+        // Spawn a one-shot clone heading the other way. Disposable so it
+        // doesn't respawn after going out.
+        if (state.balls.length < MAX_BALLS) {
+          state.balls.push({
+            x: ball.x,
+            y: ball.y,
+            vx: -ball.vx,
+            vy: ball.vy,
+            owner: ball.owner,
+            lastHitBy: ball.lastHitBy,
+            stuck: false,
+            disposable: true,
+          });
+          playDrop(pitchForY(block.y) * 1.5, 0.18, 0.22, 1.8);
+        }
+        break;
+      case 'extend':
+        setPaddleWidth(scorer, Math.min(PADDLE_MAX, state[scorer].paddleW + PADDLE_DELTA), EXTEND_DURATION);
+        playDrop(pitchForY(block.y) * 1.3, 0.18, 0.24, 1.7);
+        break;
+      case 'shrink':
+        setPaddleWidth(opponent, Math.max(PADDLE_MIN, state[opponent].paddleW - PADDLE_DELTA), SHRINK_DURATION);
+        playDrop(pitchForY(block.y) * 0.8, 0.18, 0.24, 1.4);
+        break;
+      case 'shield':
+        state[scorer].shieldUntil = state.gameTime + SHIELD_DURATION;
+        playDrop(pitchForY(block.y) * 1.1, 0.18, 0.30, 1.6);
+        break;
+      case 'armor':
+        // Self-armor: scorer's own blocks become 2-hit for ARMOR_DURATION.
+        applyArmorToSide(scorer);
+        playDrop(pitchForY(block.y) * 0.9, 0.18, 0.28, 1.2);
+        break;
+    }
+  }
+
+  function setPaddleWidth(side, w, durationMs) {
+    const pad = state[side];
+    const prevW = pad.paddleW;
+    pad.paddleW = w;
+    pad.paddleEffectUntil = state.gameTime + durationMs;
+    // Keep the paddle centered around its old midpoint if it grew/shrank,
+    // and clamp to the playfield.
+    pad.x += (prevW - w) / 2;
+    pad.x = Math.max(0, Math.min(W - pad.paddleW, pad.x));
+  }
+
+  function applyArmorToSide(side) {
+    state.armorExpiresAt[side] = state.gameTime + ARMOR_DURATION;
+    for (const b of state.blocks) {
+      if (!b.alive || b.armor > 0) continue;
+      if (sideOfBlock(b) === side) b.armor = 1;
+    }
+  }
+
+  function sideOfBlock(b) {
+    return (b.y + b.h / 2) < H / 2 ? 'cpu' : 'player';
+  }
+
+  function expireEffects() {
+    const now = state.gameTime;
+    for (const side of ['player', 'cpu']) {
+      const pad = state[side];
+      if (pad.paddleEffectUntil > 0 && pad.paddleEffectUntil <= now) {
+        setPaddleWidth(side, PADDLE_W, 0);
+        pad.paddleEffectUntil = 0;
+      }
+      if (state.armorExpiresAt[side] > 0 && state.armorExpiresAt[side] <= now) {
+        state.armorExpiresAt[side] = 0;
+        for (const b of state.blocks) {
+          if (sideOfBlock(b) === side) b.armor = 0;
+        }
+      }
+    }
   }
 
   function pickBallForCPU() {
@@ -897,8 +1030,18 @@ const Pongonoid = (() => {
     // Add the two new rows centered on the midline (same gap as everywhere else)
     const topRowY = midY - BLOCK_GAP / 2 - BLOCK_H;
     const bottomRowY = midY + BLOCK_GAP / 2;
-    state.blocks.push(...rowBlocks(topRowY));
-    state.blocks.push(...rowBlocks(bottomRowY));
+    const newTop = rowBlocks(topRowY);
+    const newBottom = rowBlocks(bottomRowY);
+    // If armor is currently active for either side, fresh blocks on that
+    // side spawn already armored.
+    if (state.armorExpiresAt.cpu > state.gameTime) {
+      for (const b of newTop) b.armor = 1;
+    }
+    if (state.armorExpiresAt.player > state.gameTime) {
+      for (const b of newBottom) b.armor = 1;
+    }
+    state.blocks.push(...newTop);
+    state.blocks.push(...newBottom);
 
     // Safety: remove any block that ended up overlapping a live ball
     for (const ball of state.balls) {
@@ -924,37 +1067,12 @@ const Pongonoid = (() => {
   }
 
   function respawnBall(ball) {
-    // Look at the OTHER balls (excluding this one which just went out).
-    // Count how many are on each side based on direction of travel toward
-    // their respective paddles. We use vertical position as a proxy for
-    // "which half is the ball currently in".
-    const midY = H / 2;
-    let playerHas = false;
-    let cpuHas = false;
-    for (const other of state.balls) {
-      if (other === ball) continue;
-      // a "stuck" ball is on its owner's side
-      if (other.stuck) {
-        if (other.owner === 'player') playerHas = true;
-        else cpuHas = true;
-        continue;
-      }
-      if (other.y >= midY) playerHas = true;
-      else cpuHas = true;
-    }
-
-    let serveTo;
-    if (!playerHas && cpuHas) {
-      serveTo = 'player';
-    } else if (!cpuHas && playerHas) {
-      serveTo = 'cpu';
-    } else {
-      // both sides have a ball, or neither — fall back to original owner
-      serveTo = ball.owner;
-    }
-
-    const fresh = makeBall(serveTo);
-    fresh.owner = serveTo; // update ownership so future logic is consistent
+    // Each main ball is bound to its original side — it always respawns there.
+    // (Earlier this function tried to re-route the ball to whichever side was
+    // empty, but that could flip ownership and leave a side with no main ball
+    // at all. With disposable splitter clones in the mix we don't need that
+    // rerouting anymore.)
+    const fresh = makeBall(ball.owner);
     Object.assign(ball, fresh);
   }
 
@@ -967,57 +1085,79 @@ const Pongonoid = (() => {
     ctx.lineWidth = 1.5;
 
     // Blocks — CPU side (top half) filled black, player side (bottom half) outlined.
-    // Splitter blocks carry an "x" mark so the player can spot them from afar.
+    // Special blocks carry a small icon showing their effect.
+    // Armored blocks render with an inset ring.
     const midY = H / 2;
     ctx.lineWidth = 1;
     for (const b of state.blocks) {
       if (!b.alive) continue;
       const blockMid = b.y + b.h / 2;
       const onCpuSide = blockMid < midY;
+      const ink = onCpuSide ? '#ffffff' : '#000000';
       if (onCpuSide) {
         ctx.fillStyle = '#000000';
         ctx.fillRect(b.x, b.y, b.w, b.h);
       } else {
+        ctx.strokeStyle = '#000000';
         ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
       }
-      if (b.splitter) {
-        const cx = b.x + b.w / 2;
-        const cy = b.y + b.h / 2;
-        const r = 5;
+      // Armor "second skin": inner ring drawn in contrasting ink.
+      if (b.armor > 0) {
         ctx.save();
-        ctx.strokeStyle = onCpuSide ? '#ffffff' : '#000000';
-        ctx.lineWidth = 1.4;
-        ctx.beginPath();
-        ctx.moveTo(cx - r, cy - r); ctx.lineTo(cx + r, cy + r);
-        ctx.moveTo(cx + r, cy - r); ctx.lineTo(cx - r, cy + r);
-        ctx.stroke();
+        ctx.strokeStyle = ink;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(b.x + 2.5, b.y + 2.5, b.w - 5, b.h - 5);
         ctx.restore();
+      }
+      // Special-type icon
+      if (b.type !== 'normal') {
+        drawSpecialIcon(b, ink);
       }
     }
 
     // Paddles
     ctx.lineWidth = 1.5;
+    const pW = state.player.paddleW;
+    const cW = state.cpu.paddleW;
     // player paddle — bright fill
     ctx.fillStyle = state.playerColor;
-    ctx.fillRect(state.player.x, state.player.y, PADDLE_W, PADDLE_H);
+    ctx.fillRect(state.player.x, state.player.y, pW, PADDLE_H);
     ctx.strokeStyle = '#000000';
-    ctx.strokeRect(state.player.x + 0.5, state.player.y + 0.5, PADDLE_W - 1, PADDLE_H - 1);
+    ctx.strokeRect(state.player.x + 0.5, state.player.y + 0.5, pW - 1, PADDLE_H - 1);
     // cpu paddle — outline only
-    ctx.strokeRect(state.cpu.x + 0.5, state.cpu.y + 0.5, PADDLE_W - 1, PADDLE_H - 1);
+    ctx.strokeRect(state.cpu.x + 0.5, state.cpu.y + 0.5, cW - 1, PADDLE_H - 1);
 
-    // Balls (outline circles)
+    // Balls
+    //  - CPU-owned balls are filled, player-owned balls are outlined.
+    //  - The two main (non-disposable) balls take the player's accent color.
+    //  - Disposable clones (from splitters) are pure black/white.
     for (const ball of state.balls) {
+      const isPlayer = ball.owner === 'player';
+      const color = ball.disposable ? '#000000' : state.playerColor;
       ctx.beginPath();
       ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
-      ctx.stroke();
+      if (isPlayer) {
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = color;
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
     }
+    // restore default stroke color for anything that draws after this block
+    ctx.strokeStyle = '#000000';
 
     // tiny markers on each paddle to distinguish player/cpu
+    // Tick marks divide the paddle into sections of fixed width PADDLE_SECTION,
+    // so a wider/narrower paddle naturally has more/fewer divisions.
     ctx.lineWidth = 1;
-    // player has tick marks (white on colored fill)
+    const playerSections = Math.round(pW / PADDLE_SECTION);
+    const cpuSections    = Math.round(cW / PADDLE_SECTION);
+    // player has solid tick marks (white on colored fill)
     ctx.strokeStyle = '#ffffff';
-    for (let i = 1; i < 4; i++) {
-      const tx = state.player.x + (PADDLE_W * i / 4);
+    for (let i = 1; i < playerSections; i++) {
+      const tx = state.player.x + PADDLE_SECTION * i;
       ctx.beginPath();
       ctx.moveTo(tx, state.player.y + 2);
       ctx.lineTo(tx, state.player.y + PADDLE_H - 2);
@@ -1027,14 +1167,22 @@ const Pongonoid = (() => {
     // cpu has dotted marks
     ctx.save();
     ctx.setLineDash([1, 2]);
-    for (let i = 1; i < 4; i++) {
-      const tx = state.cpu.x + (PADDLE_W * i / 4);
+    for (let i = 1; i < cpuSections; i++) {
+      const tx = state.cpu.x + PADDLE_SECTION * i;
       ctx.beginPath();
       ctx.moveTo(tx, state.cpu.y + 2);
       ctx.lineTo(tx, state.cpu.y + PADDLE_H - 2);
       ctx.stroke();
     }
     ctx.restore();
+
+    // Shield indicators — dashed line along the protected edge while active.
+    if (state.player.shieldUntil > state.gameTime) {
+      drawShieldLine(H - 2);
+    }
+    if (state.cpu.shieldUntil > state.gameTime) {
+      drawShieldLine(2);
+    }
 
     // Score popups
     ctx.save();
@@ -1053,6 +1201,90 @@ const Pongonoid = (() => {
       ctx.fillStyle = '#000000';
       ctx.fillText(text, pop.x, pop.y);
     }
+    ctx.restore();
+  }
+
+  // ---- Special-block icon drawing ----
+  function drawSpecialIcon(b, ink) {
+    const cx = b.x + b.w / 2;
+    const cy = b.y + b.h / 2;
+    ctx.save();
+    ctx.strokeStyle = ink;
+    ctx.fillStyle = ink;
+    ctx.lineWidth = 1.2;
+    switch (b.type) {
+      case 'splitter': {
+        // two outlined dots — "1 → 2 balls"
+        const dotR = 3.6, dx = 9;
+        ctx.beginPath(); ctx.arc(cx - dx, cy, dotR, 0, Math.PI * 2); ctx.stroke();
+        ctx.beginPath(); ctx.arc(cx + dx, cy, dotR, 0, Math.PI * 2); ctx.stroke();
+        break;
+      }
+      case 'extend': {
+        // two chevrons pointing outward  ◄  ►
+        const tipL = cx - 13, tipR = cx + 13;
+        const baseL = cx - 6, baseR = cx + 6;
+        const ay = 4;
+        ctx.beginPath();
+        ctx.moveTo(baseL, cy - ay); ctx.lineTo(tipL, cy); ctx.lineTo(baseL, cy + ay);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(baseR, cy - ay); ctx.lineTo(tipR, cy); ctx.lineTo(baseR, cy + ay);
+        ctx.stroke();
+        // small connecting bar
+        ctx.beginPath();
+        ctx.moveTo(baseL + 1, cy); ctx.lineTo(baseR - 1, cy);
+        ctx.stroke();
+        break;
+      }
+      case 'shrink': {
+        // two chevrons pointing inward  ►  ◄
+        const tipL = cx - 4, tipR = cx + 4;
+        const baseL = cx - 11, baseR = cx + 11;
+        const ay = 4;
+        ctx.beginPath();
+        ctx.moveTo(baseL, cy - ay); ctx.lineTo(tipL, cy); ctx.lineTo(baseL, cy + ay);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(baseR, cy - ay); ctx.lineTo(tipR, cy); ctx.lineTo(baseR, cy + ay);
+        ctx.stroke();
+        break;
+      }
+      case 'shield': {
+        // small fence-like row of vertical bars
+        for (let i = -1; i <= 1; i++) {
+          const px = cx + i * 6;
+          ctx.beginPath();
+          ctx.moveTo(px, cy - 4);
+          ctx.lineTo(px, cy + 4);
+          ctx.stroke();
+        }
+        // baseline under the bars
+        ctx.beginPath();
+        ctx.moveTo(cx - 8, cy + 4.5);
+        ctx.lineTo(cx + 8, cy + 4.5);
+        ctx.stroke();
+        break;
+      }
+      case 'armor': {
+        // nested concentric rectangle
+        ctx.strokeRect(cx - 10 + 0.5, cy - 5 + 0.5, 20 - 1, 10 - 1);
+        ctx.strokeRect(cx - 6 + 0.5, cy - 3 + 0.5, 12 - 1, 6 - 1);
+        break;
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawShieldLine(y) {
+    ctx.save();
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
     ctx.restore();
   }
 
