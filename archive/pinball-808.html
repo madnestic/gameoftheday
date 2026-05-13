@@ -1,4 +1,17 @@
 <!DOCTYPE html>
+<!--
+  ARCHIVED SNAPSHOT — Pinball-808 + Pongonoid
+  ============================================
+  Frozen on 2026-05-13. Pinball-808 was paused after this point — the design
+  wasn't clicking, so the game was lifted out of index.html. This file is a
+  full, playable copy of the state at the moment of archival.
+
+  Open it directly in a browser (or `python3 -m http.server` from the project
+  root and visit /archive/pinball-808.html) to play either game.
+
+  Concept doc: /Users/nikita/Downloads/PINBALL_808_CONCEPT.md
+  Project handoff: ../HANDOFF.md
+-->
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
@@ -525,11 +538,11 @@
         </div>
         <div class="game-card-arrow">▸</div>
       </button>
-      <button class="game-card" data-game="slicer">
+      <button class="game-card" data-game="pinball">
         <div class="game-card-num">№02</div>
         <div class="game-card-body">
-          <div class="game-card-title">space slicer</div>
-          <div class="game-card-sub">invaders · they fall in pieces</div>
+          <div class="game-card-title">pinball-808</div>
+          <div class="game-card-sub">pinball as a drum machine</div>
         </div>
         <div class="game-card-arrow">▸</div>
       </button>
@@ -1598,155 +1611,48 @@ const Pongonoid = (() => {
   return Games.pongonoid;
 })();
 
-// ============ SPACE SLICER ============
-// Space Invaders where the player's shot doesn't destroy enemies — it slices
-// them in half. The two halves become rigid-body fragments with gravity and
-// rotation, and rain down on the player. Three destructible covers between
-// the player and the swarm provide shelter; covers erode cell-by-cell on any
-// hit (player shot OR falling fragment).
-const SpaceSlicer = (() => {
+// ============ PINBALL-808 ============
+// A vertical pinball table where every active element is wired to a TR-808
+// voice. Hits are quantized to 16th notes at a fixed BPM so the resulting
+// stream of impacts arrives as a beat instead of noise.
+const Pinball808 = (() => {
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const overlay = document.getElementById('overlay');
   const overlayTitle = document.getElementById('overlayTitle');
   const overlayText = document.getElementById('overlayText');
 
-  // Logical playfield
-  const W = 480;
-  const H = 720;
+  // Logical playfield — narrower & taller than Pongonoid for a pinball feel.
+  const W = 400;
+  const H = 700;
 
-  // Player
-  const PLAYER_W = 38;
-  const PLAYER_H = 22;
-  const PLAYER_Y = H - 48;
-  const PLAYER_SPEED = 5.2;
-
-  // Projectiles
-  const SHOT_SPEED = 13;
-  const SHOT_LIMIT = 3;       // max simultaneous shots in flight
-  const SHOT_LEN = 10;
-
-  // Enemy formation — sprite is a pixel-grid bitmap, BW×BH cells of ENEMY_CELL.
-  const ENEMY_ROWS = 4;
-  const ENEMY_COLS = 6;
-  const ENEMY_BW = 15;          // bitmap width in cells (more detail than before)
-  const ENEMY_BH = 11;          // bitmap height in cells
-  const ENEMY_CELL = 3;         // cell size in pixels (sprite = 45×33)
-  const ENEMY_W = ENEMY_BW * ENEMY_CELL;
-  const ENEMY_H = ENEMY_BH * ENEMY_CELL;
-  const ENEMY_GAP_X = 12;
-  const ENEMY_GAP_Y = 12;
-  const ENEMY_TOP_Y = 70;
-  // Enemy survives slicing as long as the larger half retains at least this
-  // fraction of the original filled cells. Clip off a tiny piece → damaged but
-  // alive; cut close to the middle → dies and both halves fall.
-  const ENEMY_DEATH_FRACTION = 0.5;
-  const MARCH_INTERVAL_BASE = 520; // ms between formation steps (speeds up with kills + wave)
-  const MARCH_STEP_X = 9;          // px per step horizontally
-  const MARCH_STEP_Y = 18;         // px per descent on wall touch
-  const ENEMY_DANGER_Y = PLAYER_Y - 28; // if any enemy reaches this y → instant lose
-
-  // Enemy fire — random alien shoots downward.
-  const ENEMY_SHOT_SPEED = 4.2;
-  const ENEMY_SHOT_PROB_BASE = 0.006; // per-frame chance at wave 1; scales with wave
-  const ENEMY_SHOT_LEN = 12;
-
-  // Covers — fine-grained cell grid so damage erodes covers gradually.
-  const COVER_COUNT = 3;
-  const COVER_CELL = 4;
-  const COVER_COLS = 18;
-  const COVER_ROWS = 11;
-  const COVER_W = COVER_COLS * COVER_CELL; // 72
-  const COVER_H = COVER_ROWS * COVER_CELL; // 44
-  const COVER_Y = PLAYER_Y - 92;
-  const HIT_RADIUS_SHOT = 6;   // shot blasts ~3 cells across
-  const HIT_RADIUS_FRAG = 10;  // falling fragment blasts ~5 cells across
-
-  // Physics
+  const BALL_R = 9;
   const GRAVITY = 0.22;
-  const FRAG_FRICTION = 0.998;
-  const FRAG_ANGULAR_DAMP = 0.992;
+  const FRICTION = 0.999;
+  const MAX_SPEED = 12;
 
-  // ---- 4 enemy silhouettes as pixel-grid bitmaps (15×11 cells) ----
-  // High-detail Space-Invader-style aliens — antennae, arms, tentacles, feet.
-  // Slicing operates on the cell grid: every slice cuts at a cell column,
-  // so the resulting fragments have clean stepped edges that match the
-  // chunky pixel-art look of the sprites themselves.
-  function parseBitmap(rows) {
-    return rows.map(row =>
-      row.split('').map(ch => ch !== '.' && ch !== ' ')
-    );
-  }
+  // Flipper geometry
+  const FLIPPER_LEN = 72;
+  const FLIPPER_THICK = 14;        // thicker capsule = tip kick is more forgiving
+  const FLIPPER_REST_DEG = 28;     // tip below pivot at rest
+  const FLIPPER_ACTIVE_DEG = -32;  // tip above pivot when fired
+  const FLIPPER_OMEGA = 0.32;      // rad/frame — slow enough to catch the ball mid-swing
 
-  const BITMAPS = [
-    // 0 — Crab: antennae, wide body, four legs.
-    parseBitmap([
-      "..X.........X..",
-      "..X.........X..",
-      ".XX.........XX.",
-      "..XXXXXXXXXXX..",
-      ".XXXXXXXXXXXXX.",
-      "XXX.XXXXXXX.XXX",
-      "XXXXXXXXXXXXXXX",
-      "XX..XXXXXXX..XX",
-      "X.X.X.....X.X.X",
-      "..X.X..X..X.X..",
-      "...X.X.X.X.X...",
-    ]),
-    // 1 — Squid: pointed head, six tentacles.
-    parseBitmap([
-      ".......X.......",
-      "......XXX......",
-      ".....XX.XX.....",
-      "....XXXXXXX....",
-      "...XX..X..XX...",
-      "...XXXXXXXXX...",
-      "..XX.XXXXX.XX..",
-      ".XXXXXXXXXXXXX.",
-      "X.X.XXXXXXX.X.X",
-      ".X.X.X.X.X.X.X.",
-      "X.X.X.X.X.X.X.X",
-    ]),
-    // 2 — Octopus: wide rounded body with many legs.
-    parseBitmap([
-      "....XXXXXXX....",
-      "..XXXXXXXXXXX..",
-      ".XXXXXXXXXXXXX.",
-      "XXX.XXX.XXX.XXX",
-      "XXXXXXXXXXXXXXX",
-      "X.XXXXXXXXXXX.X",
-      ".XXXXXXXXXXXXX.",
-      "XX.XX.XXX.XX.XX",
-      "X..XX..X..XX..X",
-      "...XX.X.X.XX...",
-      ".X.X.X.X.X.X.X.",
-    ]),
-    // 3 — Drone: angular dart with prongs (used as a spare row pattern).
-    parseBitmap([
-      "......XXX......",
-      ".....XXXXX.....",
-      "....XXXXXXX....",
-      "...XX.XXX.XX...",
-      "..XXXXXXXXXXX..",
-      ".XX.XXXXXXX.XX.",
-      "XXXXXXXXXXXXXXX",
-      "XX.X.XXXXX.X.XX",
-      "X.X.X.....X.X.X",
-      "..XXX..X..XXX..",
-      ".XXX...X...XXX.",
-    ]),
-  ];
+  // Drain gap at bottom (between flipper pivots)
+  const DRAIN_LEFT = 130;
+  const DRAIN_RIGHT = 270;
 
-  // Player accent color, picked per-round (same palette as Pongonoid).
-  const PLAYER_COLORS = [
-    '#ff2e6e', '#e54a00', '#d62828', '#c2185b',
-    '#9b51ff', '#6a1b9a', '#1f6bff', '#2e7d32',
-  ];
-  function pickColor() {
-    return PLAYER_COLORS[Math.floor(Math.random() * PLAYER_COLORS.length)];
-  }
+  // Music
+  const BPM = 90;
+  const STEP_DUR = 60 / BPM / 4; // 16th note in seconds (~0.1667s)
 
-  // ---- Audio (Web Audio, no files) ----
+  // ---- HUD elements (bound in init via setGameHeader) ----
+  let scoreEl = null;
+  let ballsEl = null;
+  let keyEl = null;
+  let stepDotEl = null;
+
+  // ---- Audio ----
   let audioCtx = null;
   let masterGain = null;
   let noiseBuffer = null;
@@ -1756,238 +1662,388 @@ const SpaceSlicer = (() => {
     try {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       masterGain = audioCtx.createGain();
-      masterGain.gain.value = 0.7;
+      masterGain.gain.value = 0.85;
       masterGain.connect(audioCtx.destination);
-    } catch (e) { audioCtx = null; }
+    } catch (e) {
+      audioCtx = null;
+    }
     return audioCtx;
   }
 
-  function getNoise() {
+  function getNoiseBuffer() {
     if (noiseBuffer) return noiseBuffer;
-    const c = ensureAudio(); if (!c) return null;
-    noiseBuffer = c.createBuffer(1, c.sampleRate, c.sampleRate);
-    const d = noiseBuffer.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const ctx = ensureAudio();
+    if (!ctx) return null;
+    const len = ctx.sampleRate * 1.0;
+    noiseBuffer = ctx.createBuffer(1, len, ctx.sampleRate);
+    const data = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
     return noiseBuffer;
   }
 
   function playNoise(when, dur, gain, hpFreq, lpFreq) {
-    const c = ensureAudio(); if (!c) return;
-    const src = c.createBufferSource();
-    src.buffer = getNoise();
+    const ctx = ensureAudio();
+    if (!ctx) return;
+    const src = ctx.createBufferSource();
+    src.buffer = getNoiseBuffer();
     let node = src;
-    if (hpFreq) { const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = hpFreq; node.connect(hp); node = hp; }
-    if (lpFreq) { const lp = c.createBiquadFilter(); lp.type = 'lowpass';  lp.frequency.value = lpFreq; node.connect(lp); node = lp; }
-    const g = c.createGain();
+    if (hpFreq) {
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass';
+      hp.frequency.value = hpFreq;
+      node.connect(hp);
+      node = hp;
+    }
+    if (lpFreq) {
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = lpFreq;
+      node.connect(lp);
+      node = lp;
+    }
+    const g = ctx.createGain();
     g.gain.setValueAtTime(gain, when);
     g.gain.exponentialRampToValueAtTime(0.0008, when + dur);
     node.connect(g).connect(masterGain);
-    src.start(when); src.stop(when + dur + 0.05);
+    src.start(when);
+    src.stop(when + dur + 0.05);
   }
 
-  function sfxShoot() {
-    const c = ensureAudio(); if (!c) return;
-    const t = c.currentTime;
-    const osc = c.createOscillator();
-    osc.type = 'square';
-    osc.frequency.setValueAtTime(900, t);
-    osc.frequency.exponentialRampToValueAtTime(220, t + 0.08);
-    const g = c.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.13, t + 0.002);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-    osc.connect(g).connect(masterGain);
-    osc.start(t); osc.stop(t + 0.12);
-  }
-
-  function sfxSlice() {
-    const c = ensureAudio(); if (!c) return;
-    const t = c.currentTime;
-    // Sharp high "swoosh" — descending sweep
-    const osc = c.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(1800, t);
-    osc.frequency.exponentialRampToValueAtTime(400, t + 0.12);
-    const g = c.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.12, t + 0.003);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
-    const lp = c.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.setValueAtTime(4000, t);
-    lp.frequency.exponentialRampToValueAtTime(800, t + 0.14);
-    osc.connect(lp).connect(g).connect(masterGain);
-    osc.start(t); osc.stop(t + 0.16);
-    playNoise(t, 0.08, 0.08, 3000, 8000);
-  }
-
-  function sfxThud() {
-    const c = ensureAudio(); if (!c) return;
-    const t = c.currentTime;
-    const osc = c.createOscillator();
+  // ---- 808 voices ----
+  // Each voice schedules at audio time `when` (already quantized).
+  function voiceKick(when) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const osc = ctx.createOscillator();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(180, t);
-    osc.frequency.exponentialRampToValueAtTime(60, t + 0.18);
-    const g = c.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.18, t + 0.005);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    osc.frequency.setValueAtTime(160, when);
+    osc.frequency.exponentialRampToValueAtTime(48, when + 0.18);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.6, when + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.45);
     osc.connect(g).connect(masterGain);
-    osc.start(t); osc.stop(t + 0.25);
+    osc.start(when); osc.stop(when + 0.5);
   }
 
-  function sfxHurt() {
-    const c = ensureAudio(); if (!c) return;
-    const t = c.currentTime;
-    const osc = c.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(220, t);
-    osc.frequency.exponentialRampToValueAtTime(70, t + 0.35);
-    const g = c.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.22, t + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
-    osc.connect(g).connect(masterGain);
-    osc.start(t); osc.stop(t + 0.42);
+  function voiceSnare(when) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(190, when);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0, when);
+    og.gain.linearRampToValueAtTime(0.18, when + 0.003);
+    og.gain.exponentialRampToValueAtTime(0.001, when + 0.13);
+    osc.connect(og).connect(masterGain);
+    osc.start(when); osc.stop(when + 0.15);
+    playNoise(when, 0.18, 0.32, 1500, 9000);
   }
 
-  function sfxGameOver() {
-    const c = ensureAudio(); if (!c) return;
-    const t = c.currentTime;
+  function voiceClosedHat(when) {
+    playNoise(when, 0.04, 0.12, 7500, 14000);
+  }
+
+  function voiceOpenHat(when) {
+    playNoise(when, 0.22, 0.07, 7000, 13000);
+  }
+
+  function voiceClap(when) {
     for (let i = 0; i < 3; i++) {
-      const osc = c.createOscillator();
-      osc.type = 'triangle';
-      const tt = t + i * 0.18;
-      osc.frequency.setValueAtTime(330 - i * 60, tt);
-      osc.frequency.exponentialRampToValueAtTime(110 - i * 25, tt + 0.3);
-      const g = c.createGain();
-      g.gain.setValueAtTime(0, tt);
-      g.gain.linearRampToValueAtTime(0.18, tt + 0.01);
-      g.gain.exponentialRampToValueAtTime(0.001, tt + 0.35);
-      osc.connect(g).connect(masterGain);
-      osc.start(tt); osc.stop(tt + 0.38);
+      playNoise(when + i * 0.012, 0.025, 0.10, 1200, 4000);
+    }
+    playNoise(when + 0.04, 0.13, 0.18, 1200, 4000);
+  }
+
+  function voiceCowbell(when) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const sumGain = ctx.createGain();
+    sumGain.gain.setValueAtTime(0, when);
+    sumGain.gain.linearRampToValueAtTime(0.16, when + 0.002);
+    sumGain.gain.exponentialRampToValueAtTime(0.001, when + 0.22);
+    sumGain.connect(masterGain);
+    for (const f of [540, 800]) {
+      const osc = ctx.createOscillator();
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(f, when);
+      osc.connect(sumGain);
+      osc.start(when); osc.stop(when + 0.24);
     }
   }
 
-  function sfxEnemyShoot() {
-    const c = ensureAudio(); if (!c) return;
-    const t = c.currentTime;
-    const osc = c.createOscillator();
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(280, t);
-    osc.frequency.exponentialRampToValueAtTime(140, t + 0.12);
-    const g = c.createGain();
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(0.08, t + 0.003);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+  function voiceTom(when, baseFreq) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(baseFreq * 1.6, when);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq, when + 0.09);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.32, when + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.32);
     osc.connect(g).connect(masterGain);
-    osc.start(t); osc.stop(t + 0.16);
+    osc.start(when); osc.stop(when + 0.34);
   }
 
-  function sfxWin() {
-    const c = ensureAudio(); if (!c) return;
-    const t = c.currentTime;
-    const notes = [523, 659, 784, 1047]; // C5 E5 G5 C6
-    for (let i = 0; i < notes.length; i++) {
-      const osc = c.createOscillator();
-      osc.type = 'triangle';
-      const tt = t + i * 0.12;
-      osc.frequency.setValueAtTime(notes[i], tt);
-      const g = c.createGain();
-      g.gain.setValueAtTime(0, tt);
-      g.gain.linearRampToValueAtTime(0.16, tt + 0.005);
-      g.gain.exponentialRampToValueAtTime(0.001, tt + 0.25);
-      osc.connect(g).connect(masterGain);
-      osc.start(tt); osc.stop(tt + 0.28);
+  function voiceTomLow(when)  { voiceTom(when, 90); }
+  function voiceTomHigh(when) { voiceTom(when, 180); }
+
+  function voiceMetronome(when) {
+    // Very quiet downbeat tick — just a hint of pulse.
+    playNoise(when, 0.012, 0.025, 8000, 14000);
+  }
+
+  function voiceDrain(when) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(220, when);
+    osc.frequency.exponentialRampToValueAtTime(70, when + 0.4);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.3, when + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.5);
+    osc.connect(g).connect(masterGain);
+    osc.start(when); osc.stop(when + 0.55);
+  }
+
+  // Conga — tighter, brighter cousin of the tom. Used on the new side bumpers.
+  function voiceConga(when) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(290, when);
+    osc.frequency.exponentialRampToValueAtTime(140, when + 0.09);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.26, when + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.22);
+    osc.connect(g).connect(masterGain);
+    osc.start(when); osc.stop(when + 0.24);
+  }
+
+  // Rim shot — sharp tonal click + bright noise.
+  function voiceRim(when) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const osc = ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(1500, when);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.16, when + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.06);
+    osc.connect(g).connect(masterGain);
+    osc.start(when); osc.stop(when + 0.07);
+    playNoise(when, 0.04, 0.10, 3000, 8500);
+  }
+
+  // Clave — wood-block click for the spinner. Higher and dryer than rim.
+  function voiceClave(when) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const osc = ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(2100, when);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.13, when + 0.001);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.05);
+    osc.connect(g).connect(masterGain);
+    osc.start(when); osc.stop(when + 0.06);
+  }
+
+  // Tick — short noise burst used as the drum layer for drop-target hits.
+  function voiceTick(when) {
+    playNoise(when, 0.03, 0.09, 6000, 12500);
+  }
+
+  // Snare fill — a quick 4-step roll on 32nd notes, fired when the player
+  // clears the whole drop-target row.
+  function voiceFill(when) {
+    const sd = stepDur();
+    for (let i = 0; i < 4; i++) {
+      voiceSnare(when + i * (sd / 2));
     }
+  }
+
+  // ---- Lead + bass voices (melodic layer) ----
+  // Lead — short plucky synth used as the accent on every drum hit. Each
+  // bumper/slingshot is assigned a scale degree at round start; pressing it
+  // schedules both the drum AND this voice at the same quantized step, so
+  // pitched accents land in time with the beat.
+  function voiceLead(when, freq) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, when);
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(freq * 5, when);
+    filter.frequency.exponentialRampToValueAtTime(freq * 1.5, when + 0.22);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.10, when + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0008, when + 0.28);
+    osc.connect(filter).connect(g).connect(masterGain);
+    osc.start(when); osc.stop(when + 0.3);
+  }
+
+  // Bass — auto-played on every quarter note, cycles through a 4-bar chord
+  // progression. Gives the round a harmonic foundation independent of player
+  // skill: even a tap-fest sounds like a track because the bass is grooving.
+  function voiceBass(when, freq) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(freq, when);
+    const sub = ctx.createOscillator();
+    sub.type = 'sine';
+    sub.frequency.setValueAtTime(freq, when);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, when);
+    g.gain.linearRampToValueAtTime(0.15, when + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.42);
+    osc.connect(g); sub.connect(g); g.connect(masterGain);
+    osc.start(when); osc.stop(when + 0.45);
+    sub.start(when); sub.stop(when + 0.45);
+  }
+
+  // ---- Music rolling (per-round randomization) ----
+  // Each new round picks a different root note, tempo, chord progression and
+  // mapping of scale degrees to elements. Minor pentatonic is locked because
+  // every combination of notes in that scale harmonizes with every other —
+  // the player can't accidentally create something dissonant.
+  function rollMusic() {
+    const ROOTS = [
+      { name: 'A',  hz: 220.00 },
+      { name: 'B',  hz: 246.94 },
+      { name: 'C#', hz: 277.18 },
+      { name: 'D#', hz: 311.13 },
+      { name: 'F#', hz: 369.99 },
+    ];
+    // 4-bar progressions in semitones from the root.
+    const PROGRESSIONS = [
+      [0,  0,  7,  5],   // i-i-v-iv
+      [0,  5,  7,  0],   // i-iv-v-i
+      [0, -3,  5,  7],   // i-bVI-iv-v
+      [0,  0,  5,  7],   // i-i-iv-v
+    ];
+    const r = ROOTS[Math.floor(Math.random() * ROOTS.length)];
+    const prog = PROGRESSIONS[Math.floor(Math.random() * PROGRESSIONS.length)];
+    const bpm = 86 + Math.floor(Math.random() * 9); // 86..94 — small but audible range
+    const scale = [0, 3, 5, 7, 10]; // minor pentatonic
+    // Build the per-element pitch assignment. We need 10 slots (5 bumpers,
+    // 2 slingshots, 3 drop-targets). Doing two independent shuffles of the
+    // 5-note pentatonic gives every note at least one element and avoids
+    // long runs of the same pitch.
+    const degs = [];
+    for (let pass = 0; pass < 2; pass++) {
+      const round = [0, 1, 2, 3, 4];
+      for (let i = round.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [round[i], round[j]] = [round[j], round[i]];
+      }
+      degs.push(...round);
+    }
+    return {
+      rootName: r.name,
+      root: r.hz,
+      scale,
+      progression: prog,
+      bpm,
+      stepDur: 60 / bpm / 4, // seconds per 16th note
+      degAssign: degs,       // 0..4 -> bumper0, bumper1, bumper2, sling0, sling1
+    };
+  }
+
+  function degreeToFreq(music, deg, octave = 0) {
+    const sc = music.scale;
+    const idx = ((deg % sc.length) + sc.length) % sc.length;
+    const oct = Math.floor(deg / sc.length);
+    return music.root * Math.pow(2, sc[idx] / 12 + oct + octave);
+  }
+
+  // ---- Quantization scheduler ----
+  // Each frame we look ~0.3s into the future and place metronome ticks at
+  // their exact step times via osc.start(when) — that's how we keep musical
+  // timing independent of requestAnimationFrame jitter.
+  let beatStart = 0;       // audioCtx.currentTime at "step 0"
+  let nextStepIdx = 0;     // next metronome step to schedule
+  let lastVisualStep = -1; // latest step we've reflected in HUD pulse
+
+  function stepDur() {
+    return state && state.music ? state.music.stepDur : STEP_DUR;
+  }
+
+  function quantize(when) {
+    const sd = stepDur();
+    const elapsed = when - beatStart;
+    const stepIdx = Math.round(elapsed / sd);
+    const target = beatStart + stepIdx * sd;
+    return Math.max(target, when + 0.001);
+  }
+
+  // trigger() now takes an optional scale degree (and octave shift) — drum
+  // voice plays as before AND a pitched lead note is laid on top at the same
+  // quantized step. Octave defaults to +1 above the round's root; targets
+  // pass +2 so their hits sit higher in the mix.
+  function trigger(voice, leadDeg, leadOct = 1) {
+    const ctx = ensureAudio(); if (!ctx) return;
+    const t = quantize(ctx.currentTime);
+    voice(t);
+    if (leadDeg !== undefined && leadDeg !== null && state && state.music) {
+      voiceLead(t, degreeToFreq(state.music, leadDeg, leadOct));
+    }
+  }
+
+  function scheduleMetronome() {
+    if (!audioCtx) return;
+    const lookAhead = 0.3;
+    const sd = stepDur();
+    while (true) {
+      const t = beatStart + nextStepIdx * sd;
+      if (t > audioCtx.currentTime + lookAhead) break;
+      // Quarter notes: every 4th 16th.
+      if (nextStepIdx % 4 === 0) {
+        voiceMetronome(t);
+        // Auto-bass — same root-relative pitch for the full bar (16 steps),
+        // rotating through the 4-bar progression. Gives the round its harmony.
+        if (state && state.music) {
+          const barIdx = Math.floor(nextStepIdx / 16);
+          const semis = state.music.progression[barIdx % state.music.progression.length];
+          const bassFreq = state.music.root * Math.pow(2, semis / 12) / 2; // -1 octave
+          voiceBass(t, bassFreq);
+        }
+      }
+      nextStepIdx++;
+    }
+  }
+
+  function currentStepIdx() {
+    if (!audioCtx) return 0;
+    return Math.floor((audioCtx.currentTime - beatStart) / stepDur());
   }
 
   // ---- Geometry helpers ----
   function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
-  function rand(a, b) { return a + Math.random() * (b - a); }
 
-  // Tight AABB of an enemy — based on actual filled cells, NOT the full
-  // bitmap envelope. A damaged enemy (cells removed on one side) has its
-  // bounds correctly tracking the remaining body. Returns null if no cells
-  // are alive (caller should treat that as dead).
-  function enemyAABB(e) {
-    let minCol = e.bw, maxCol = -1;
-    let minRow = e.bh, maxRow = -1;
-    for (let r = 0; r < e.bh; r++) {
-      for (let c = 0; c < e.bw; c++) {
-        if (!e.cells[r][c]) continue;
-        if (c < minCol) minCol = c;
-        if (c > maxCol) maxCol = c;
-        if (r < minRow) minRow = r;
-        if (r > maxRow) maxRow = r;
-      }
-    }
-    if (maxCol < 0) return null;
-    const halfW = e.bw * e.cs / 2;
-    const halfH = e.bh * e.cs / 2;
-    return {
-      minX: e.cx - halfW + minCol * e.cs,
-      maxX: e.cx - halfW + (maxCol + 1) * e.cs,
-      minY: e.cy - halfH + minRow * e.cs,
-      maxY: e.cy - halfH + (maxRow + 1) * e.cs,
-    };
+  // Sign-of-cross-product point-in-triangle test (used as a safety net to
+  // eject the ball if it somehow tunnels inside a slingshot polygon).
+  function pointInTriangle(px, py, ax, ay, bx, by, cx, cy) {
+    const s1 = (px - ax) * (by - ay) - (bx - ax) * (py - ay);
+    const s2 = (px - bx) * (cy - by) - (cx - bx) * (py - by);
+    const s3 = (px - cx) * (ay - cy) - (ax - cx) * (py - cy);
+    return (s1 >= 0 && s2 >= 0 && s3 >= 0) || (s1 <= 0 && s2 <= 0 && s3 <= 0);
   }
+  function len2(x, y) { return x * x + y * y; }
+  function len(x, y) { return Math.sqrt(len2(x, y)); }
 
-  function countAliveCells(cells) {
-    let n = 0;
-    for (const row of cells) for (const c of row) if (c) n++;
-    return n;
-  }
-
-  // Which column does the shot's x correspond to? Returns the col index if it
-  // hits a filled cell anywhere in that column (the shot grazes the sprite
-  // body), or -1 if the column is empty / outside the bitmap (shot misses).
-  function shotHitsEnemyColumn(shotX, e) {
-    const halfW = e.bw * e.cs / 2;
-    const localX = shotX - e.cx;
-    const col = Math.floor((localX + halfW) / e.cs);
-    if (col < 0 || col >= e.bw) return -1;
-    for (let r = 0; r < e.bh; r++) {
-      if (e.cells[r][col]) return col;
-    }
-    return -1;
-  }
-
-  // Split a bitmap at a column. Left half keeps cells [0..sliceCol-1] (the
-  // sliced column itself goes to the RIGHT side — it's the part the blade
-  // passes through). Both returned grids preserve the original dimensions so
-  // remaining cells stay in their original local positions.
-  function sliceBitmap(cells, bw, bh, sliceCol) {
-    const leftCells = [], rightCells = [];
-    for (let r = 0; r < bh; r++) {
-      const lrow = new Array(bw).fill(false);
-      const rrow = new Array(bw).fill(false);
-      for (let c = 0; c < bw; c++) {
-        if (!cells[r][c]) continue;
-        if (c < sliceCol) lrow[c] = true;
-        else rrow[c] = true;
-      }
-      leftCells.push(lrow);
-      rightCells.push(rrow);
-    }
-    return [leftCells, rightCells];
-  }
-
-  // Centroid of the filled cells expressed in local pixel coordinates,
-  // relative to the bitmap center. Used to anchor fragment rotation on the
-  // visual center-of-mass of the half.
-  function cellsCentroid(cells, bw, bh, cs) {
-    let sx = 0, sy = 0, count = 0;
-    for (let r = 0; r < bh; r++) {
-      for (let c = 0; c < bw; c++) {
-        if (!cells[r][c]) continue;
-        sx += (c - bw / 2 + 0.5) * cs;
-        sy += (r - bh / 2 + 0.5) * cs;
-        count++;
-      }
-    }
-    if (count === 0) return null;
-    return [sx / count, sy / count, count];
+  // Closest point on segment (ax,ay)-(bx,by) to (px,py). Returns {x,y,t}
+  // where t is the parameterization 0..1 along the segment.
+  function closestOnSegment(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const l2 = dx * dx + dy * dy;
+    let t = l2 === 0 ? 0 : ((px - ax) * dx + (py - ay) * dy) / l2;
+    t = clamp(t, 0, 1);
+    return { x: ax + t * dx, y: ay + t * dy, t };
   }
 
   // ---- State ----
@@ -1995,88 +2051,202 @@ const SpaceSlicer = (() => {
   let raf = null;
   let running = false;
   let lastT = 0;
-  let scoreEl = null;
-  let livesEl = null;
-  let waveEl = null;
-  const input = { left: false, right: false, mouseX: null };
 
-  function makePlayer() {
-    return { x: W / 2, color: pickColor(), invuln: 0 };
+  // Persistent input state (key/touch -> flipper presses)
+  const input = { left: false, right: false };
+  const touchSides = new Map(); // touch.identifier -> 'left'|'right'
+
+  // Drop tube on the right — ball spawns inside it and falls into play, isolated
+  // from the rest of the playfield. After the ball exits (y > TUBE_BOTTOM),
+  // the tube only acts as a wall if the ball drifts back into the upper-right
+  // corner — its bottom is open.
+  const TUBE_X = W - 36;     // inner-left edge of the tube
+  const TUBE_BOTTOM = 200;   // tube wall ends here; below this is open playfield
+
+  function makeBall() {
+    return {
+      x: (TUBE_X + W) / 2,    // centered in the tube
+      y: 26,                  // just below the top wall
+      vx: 0,
+      vy: 0,
+      r: BALL_R,
+      stuck: true,            // released by the player — falls when launched
+    };
   }
 
-  function buildEnemies() {
-    const ens = [];
-    const formationW = ENEMY_COLS * ENEMY_W + (ENEMY_COLS - 1) * ENEMY_GAP_X;
-    const startX = (W - formationW) / 2 + ENEMY_W / 2;
-    // Row pattern: pick a different silhouette per row for visual variety.
-    const rowSilhouettes = [1, 0, 0, 2]; // squid · crab · crab · octopus
-    for (let r = 0; r < ENEMY_ROWS; r++) {
-      for (let c = 0; c < ENEMY_COLS; c++) {
-        const silIdx = rowSilhouettes[r % rowSilhouettes.length];
-        // Deep-clone the bitmap so damage from slicing doesn't leak across
-        // enemies that share the same template.
-        const cells = BITMAPS[silIdx].map(row => row.slice());
-        const cx = startX + c * (ENEMY_W + ENEMY_GAP_X);
-        const cy = ENEMY_TOP_Y + r * (ENEMY_H + ENEMY_GAP_Y);
-        ens.push({
-          cells,
-          bw: ENEMY_BW,
-          bh: ENEMY_BH,
-          cs: ENEMY_CELL,
-          cx, cy,
-          silIdx,
-          alive: true,
-          totalCells: countAliveCells(cells),
-        });
-      }
-    }
-    return ens;
+  // Walls — line segments around the play area, including funnels into the
+  // flipper zone. The drop tube is a single vertical segment that separates
+  // the tube from the rest of the playfield.
+  function buildWalls() {
+    const walls = [];
+    // outer cap (top) — covers the whole top including the tube
+    walls.push({ p1: [0, 0], p2: [W, 0], kind: 'wall' });
+    // left wall
+    walls.push({ p1: [0, 0], p2: [0, 540], kind: 'wall' });
+    // left funnel toward flipper
+    walls.push({ p1: [0, 540], p2: [DRAIN_LEFT, 620], kind: 'wall' });
+    // right wall
+    walls.push({ p1: [W, 0], p2: [W, 540], kind: 'wall' });
+    // right funnel toward flipper
+    walls.push({ p1: [W, 540], p2: [DRAIN_RIGHT, 620], kind: 'wall' });
+    // drop tube — separator between the spawn chute and the playfield
+    walls.push({ p1: [TUBE_X, 0], p2: [TUBE_X, TUBE_BOTTOM], kind: 'tube' });
+    return walls;
   }
 
-  function buildCovers() {
-    const covers = [];
-    const totalW = COVER_COUNT * COVER_W + (COVER_COUNT - 1) * 60;
+  function buildBumpers() {
+    // Top row of three (conga · kick · rim) plus the original snare/clap below
+    // — a 5-bumper formation that fills the upper playfield and gives the
+    // drum kit more voices.
+    return [
+      { x: 88,    y: 218, r: 24, voice: voiceConga, flash: 0, name: 'conga' },
+      { x: W / 2, y: 215, r: 32, voice: voiceKick,  flash: 0, name: 'kick'  },
+      { x: W-88,  y: 218, r: 24, voice: voiceRim,   flash: 0, name: 'rim'   },
+      { x: 95,    y: 335, r: 30, voice: voiceSnare, flash: 0, name: 'snare' },
+      { x: W-95,  y: 335, r: 30, voice: voiceClap,  flash: 0, name: 'clap'  },
+    ];
+  }
+
+  // 3 vertical drop-targets in a row. When all three are knocked down they
+  // respawn after a delay and trigger a snare fill — gives the player a
+  // mini-goal and an explicit "score a fill" rhythmic payoff.
+  const TARGET_W = 16;
+  const TARGET_H = 30;
+  const TARGET_Y = 380;
+  const TARGET_GAP = 8;
+  const TARGET_RESET_MS = 4500;
+
+  function buildDropTargets() {
+    const totalW = 3 * TARGET_W + 2 * TARGET_GAP;
     const startX = (W - totalW) / 2;
-    for (let i = 0; i < COVER_COUNT; i++) {
-      const x = startX + i * (COVER_W + 60);
-      const cells = [];
-      for (let r = 0; r < COVER_ROWS; r++) {
-        const row = [];
-        for (let c = 0; c < COVER_COLS; c++) row.push(true);
-        cells.push(row);
-      }
-      covers.push({ x, y: COVER_Y, cells });
+    const targets = [];
+    for (let i = 0; i < 3; i++) {
+      targets.push({
+        x: startX + i * (TARGET_W + TARGET_GAP),
+        y: TARGET_Y,
+        w: TARGET_W,
+        h: TARGET_H,
+        alive: true,
+        voice: voiceTick,
+        flash: 0,
+      });
     }
-    return covers;
+    return targets;
+  }
+
+  // Spinner — a horizontal bar the ball passes through. Each pass triggers
+  // the clave voice and bumps the spinner's angular velocity, so the visible
+  // bar keeps rotating after a hit; the rotation decays back to zero.
+  function buildSpinner() {
+    return {
+      x: W / 2,
+      y: 285,
+      w: 56,     // bar width
+      angle: 0,
+      omega: 0,
+      cooldown: 0,
+      voice: voiceClave,
+    };
+  }
+
+  // Slingshots are right triangles tucked against the side walls, sitting
+  // just above the funnel. Both diagonals are bouncy (the ball can hit them
+  // either coming down or kicked back up). The vertical "back" edge is flush
+  // with the outer wall and treated as a plain wall — it never triggers the
+  // voice, so we don't double-fire when the ball brushes it.
+  function buildSlingshots() {
+    return [
+      {
+        // Left slingshot — verts: top-corner, right tip, bottom-corner.
+        // Bottom y=510 keeps the whole shape above the funnel start at y=540.
+        verts: [[0, 420], [82, 490], [0, 510]],
+        backIdx: 2, // edge verts[2]→verts[0] is the vertical back, against the outer wall
+        voice: voiceClosedHat,
+        flash: 0,
+        cooldown: 0,
+        name: 'sling-l',
+      },
+      {
+        verts: [[W, 420], [W - 82, 490], [W, 510]],
+        backIdx: 2,
+        voice: voiceCowbell,
+        flash: 0,
+        cooldown: 0,
+        name: 'sling-r',
+      },
+    ];
   }
 
   function reset() {
+    const music = rollMusic();
     state = {
-      player: makePlayer(),
-      enemies: buildEnemies(),
-      covers: buildCovers(),
-      shots: [],
-      enemyShots: [],
-      fragments: [],
-      particles: [],
+      music,
+      ball: makeBall(),
       score: 0,
-      lives: 3,
-      wave: 1,
-      marchDir: 1,
-      marchTimer: 0,
-      result: null,
-      enemiesLeft: ENEMY_ROWS * ENEMY_COLS,
-      msg: null,
+      ballsLeft: 3,
+      walls: buildWalls(),
+      bumpers: buildBumpers(),
+      slings: buildSlingshots(),
+      targets: buildDropTargets(),
+      targetsResetAt: 0,
+      spinner: buildSpinner(),
+      flippers: {
+        left: {
+          pivot: [DRAIN_LEFT, 620],
+          // angles in radians; rest tilts down-and-right, active flips up-and-right
+          rest: FLIPPER_REST_DEG * Math.PI / 180,
+          active: FLIPPER_ACTIVE_DEG * Math.PI / 180,
+          angle: FLIPPER_REST_DEG * Math.PI / 180,
+          omega: 0,
+          dir: +1, // tip extends to the right of pivot
+          voice: voiceTomLow,
+          contactCooldown: 0,
+        },
+        right: {
+          pivot: [DRAIN_RIGHT, 620],
+          // mirror: rest tilts down-and-left (Pi - rest), active tilts up-and-left
+          rest: Math.PI - FLIPPER_REST_DEG * Math.PI / 180,
+          active: Math.PI - FLIPPER_ACTIVE_DEG * Math.PI / 180,
+          angle: Math.PI - FLIPPER_REST_DEG * Math.PI / 180,
+          omega: 0,
+          dir: -1, // tip extends to the left of pivot
+          voice: voiceTomHigh,
+          contactCooldown: 0,
+        },
+      },
+      flashFrame: 0,    // 4-step pulse
+      result: null,     // 'over' once all balls drained
+      msg: null,        // transient HUD message
       msgUntil: 0,
     };
+    // Assign a scale degree to each pitched element. degAssign has 10 slots
+    // (two shuffled passes of the 5-note pentatonic) so every bumper, sling
+    // and drop-target gets its own note for the round.
+    state.bumpers[0].leadDeg = music.degAssign[0]; // conga
+    state.bumpers[1].leadDeg = music.degAssign[1]; // kick
+    state.bumpers[2].leadDeg = music.degAssign[2]; // rim
+    state.bumpers[3].leadDeg = music.degAssign[3]; // snare
+    state.bumpers[4].leadDeg = music.degAssign[4]; // clap
+    state.slings[0].leadDeg  = music.degAssign[5]; // closed hat
+    state.slings[1].leadDeg  = music.degAssign[6]; // cowbell
+    state.targets[0].leadDeg = music.degAssign[7];
+    state.targets[1].leadDeg = music.degAssign[8];
+    state.targets[2].leadDeg = music.degAssign[9];
     updateHUD();
+  }
+
+  function showMsg(text, ms = 1200) {
+    state.msg = text;
+    state.msgUntil = performance.now() + ms;
   }
 
   function updateHUD() {
     if (!state) return;
-    if (waveEl)  waveEl.textContent  = state.wave;
     if (scoreEl) scoreEl.textContent = state.score;
-    if (livesEl) livesEl.textContent = '●'.repeat(state.lives) + '○'.repeat(3 - state.lives);
+    if (ballsEl) ballsEl.textContent = state.ballsLeft;
+    if (keyEl && state.music) {
+      keyEl.textContent = state.music.rootName + 'm·' + state.music.bpm;
+    }
   }
 
   // ---- Resize / scale ----
@@ -2096,653 +2266,699 @@ const SpaceSlicer = (() => {
     ctx.imageSmoothingEnabled = false;
   }
 
-  // ---- Input ----
-  function getCanvasX(clientX) {
+  function getCanvasPoint(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    return (clientX - rect.left) * (W / rect.width);
+    const sx = W / rect.width;
+    const sy = H / rect.height;
+    return { x: (clientX - rect.left) * sx, y: (clientY - rect.top) * sy };
   }
 
-  function isLeftKey(e)  { return e.code === 'KeyA' || e.key === 'ArrowLeft'; }
-  function isRightKey(e) { return e.code === 'KeyD' || e.key === 'ArrowRight'; }
-  function isFireKey(e)  { return e.code === 'Space' || e.key === ' ' || e.code === 'Enter' || e.code === 'KeyW' || e.key === 'ArrowUp'; }
+  // ---- Input ----
+  function isLeftKey(e)  { return e.code === 'KeyZ' || e.code === 'KeyA' || e.key === 'ArrowLeft'; }
+  function isRightKey(e) { return e.code === 'KeyX' || e.code === 'KeyD' || e.key === 'ArrowRight'; }
+  function isLaunchKey(e) { return e.code === 'Space' || e.key === ' ' || e.code === 'Enter'; }
 
   function onKeyDown(e) {
-    if (currentGame !== SpaceSlicer) return;
+    if (currentGame !== Pinball808) return;
     if (e.repeat) return;
-    if (isLeftKey(e))  { input.left = true; e.preventDefault(); }
+    if (isLeftKey(e))  { input.left = true;  e.preventDefault(); }
     if (isRightKey(e)) { input.right = true; e.preventDefault(); }
-    if (isFireKey(e))  { fire(); e.preventDefault(); }
+    if (isLaunchKey(e)) { tryLaunch(); e.preventDefault(); }
   }
   function onKeyUp(e) {
-    if (currentGame !== SpaceSlicer) return;
-    if (isLeftKey(e))  { input.left = false; e.preventDefault(); }
+    if (currentGame !== Pinball808) return;
+    if (isLeftKey(e))  { input.left = false;  e.preventDefault(); }
     if (isRightKey(e)) { input.right = false; e.preventDefault(); }
   }
 
-  function onMouseMove(e) {
-    if (currentGame !== SpaceSlicer) return;
-    if (!state || !running) return;
-    input.mouseX = getCanvasX(e.clientX);
+  function tryLaunch() {
+    if (!state || !state.ball || !state.ball.stuck || !running) return;
+    state.ball.stuck = false;
+    // Release into the drop tube — gentle initial push downward, gravity does
+    // the rest. The ball falls through the tube and exits into the playfield
+    // below TUBE_BOTTOM with no other elements in its way.
+    state.ball.vx = 0;
+    state.ball.vy = 4;
   }
+
+  // Mobile touch: split screen into left/right halves; tapping launches a
+  // stuck ball, otherwise it presses the corresponding flipper while held.
+  // The wrap is shared with Pongonoid, so we must gate on currentGame and
+  // running before consuming the event (preventDefault on a pongonoid touch
+  // would break its own input).
+  function handleTouchStart(e) {
+    if (currentGame !== Pinball808) return;
+    if (!running) return;
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const p = getCanvasPoint(t.clientX, t.clientY);
+      if (state && state.ball && state.ball.stuck) {
+        tryLaunch();
+        // Don't also press a flipper on the launch tap.
+        continue;
+      }
+      const side = p.x < W / 2 ? 'left' : 'right';
+      touchSides.set(t.identifier, side);
+      input[side] = true;
+    }
+  }
+  function handleTouchEnd(e) {
+    if (currentGame !== Pinball808) return;
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      const side = touchSides.get(t.identifier);
+      if (side) {
+        touchSides.delete(t.identifier);
+        // Only release if no other live touch is on that side.
+        let stillHeld = false;
+        for (const s of touchSides.values()) if (s === side) { stillHeld = true; break; }
+        if (!stillHeld) input[side] = false;
+      }
+    }
+  }
+
+  // Mouse fallback on desktop: clicking left/right halves flips while held.
   function onMouseDown(e) {
-    if (currentGame !== SpaceSlicer) return;
+    if (currentGame !== Pinball808) return;
     if (!running) return;
-    fire();
+    if (state && state.ball && state.ball.stuck) { tryLaunch(); return; }
+    const p = getCanvasPoint(e.clientX, e.clientY);
+    if (p.x < W / 2) input.left = true;
+    else input.right = true;
+  }
+  function onMouseUp() {
+    if (currentGame !== Pinball808) return;
+    input.left = false;
+    input.right = false;
   }
 
-  function onTouch(e) {
-    if (currentGame !== SpaceSlicer) return;
-    if (!running) return;
-    e.preventDefault();
-    if (e.touches.length > 0) {
-      input.mouseX = getCanvasX(e.touches[0].clientX);
-    }
-  }
-  function onTouchStart(e) {
-    if (currentGame !== SpaceSlicer) return;
-    if (!running) return;
-    e.preventDefault();
-    if (e.touches.length > 0) {
-      input.mouseX = getCanvasX(e.touches[0].clientX);
-      fire();
-    }
-  }
-
-  canvas.addEventListener('mousemove', onMouseMove);
-  canvas.addEventListener('mousedown', onMouseDown);
   const canvasWrap = canvas.parentElement;
-  canvasWrap.addEventListener('touchstart', onTouchStart, { passive: false });
-  canvasWrap.addEventListener('touchmove', onTouch, { passive: false });
+  canvasWrap.addEventListener('touchstart', handleTouchStart, { passive: false });
+  canvasWrap.addEventListener('touchend', handleTouchEnd, { passive: false });
+  canvasWrap.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+  canvas.addEventListener('mousedown', onMouseDown);
+  canvas.addEventListener('mouseup', onMouseUp);
+  canvas.addEventListener('mouseleave', onMouseUp);
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
 
-  function fire() {
-    if (!state || state.result) return;
-    if (state.shots.length >= SHOT_LIMIT) return;
-    state.shots.push({ x: state.player.x, y: PLAYER_Y - PLAYER_H / 2, vy: -SHOT_SPEED });
-    sfxShoot();
-  }
-
-  // ---- Cover damage ----
-  function damageCoverAt(cover, px, py, radius) {
-    const cellRadius = radius / COVER_CELL;
-    const cxIdx = (px - cover.x) / COVER_CELL;
-    const cyIdx = (py - cover.y) / COVER_CELL;
-    let knocked = 0;
-    for (let r = 0; r < COVER_ROWS; r++) {
-      for (let c = 0; c < COVER_COLS; c++) {
-        if (!cover.cells[r][c]) continue;
-        const dx = (c + 0.5) - cxIdx;
-        const dy = (r + 0.5) - cyIdx;
-        if (dx * dx + dy * dy <= cellRadius * cellRadius) {
-          cover.cells[r][c] = false;
-          knocked++;
-        }
-      }
+  // ---- Collision: ball vs static circle (bumpers) ----
+  function collideCircle(ball, cx, cy, cr, restitution) {
+    const dx = ball.x - cx, dy = ball.y - cy;
+    const d = len(dx, dy);
+    const minD = ball.r + cr;
+    if (d >= minD || d === 0) return false;
+    const nx = dx / d, ny = dy / d;
+    // push out
+    ball.x = cx + nx * minD;
+    ball.y = cy + ny * minD;
+    // reflect
+    const vDotN = ball.vx * nx + ball.vy * ny;
+    if (vDotN < 0) {
+      ball.vx -= (1 + restitution) * vDotN * nx;
+      ball.vy -= (1 + restitution) * vDotN * ny;
     }
-    return knocked;
+    return true;
   }
 
-  function pointInCover(px, py, cover) {
-    if (px < cover.x || px > cover.x + COVER_W) return false;
-    if (py < cover.y || py > cover.y + COVER_H) return false;
-    const c = Math.floor((px - cover.x) / COVER_CELL);
-    const r = Math.floor((py - cover.y) / COVER_CELL);
-    if (r < 0 || r >= COVER_ROWS || c < 0 || c >= COVER_COLS) return false;
-    return cover.cells[r][c];
-  }
-
-  // Sweep a vertical line segment (x, y0..y1) through a cover, return the
-  // first y at which the segment hits a filled cell, or null if it misses.
-  function sweepShotIntoCover(x, y0, y1, cover) {
-    // We expect y1 < y0 (shot moves up). Iterate in step-of-COVER_CELL.
-    const yStart = Math.min(y0, y1);
-    const yEnd = Math.max(y0, y1);
-    if (yStart > cover.y + COVER_H || yEnd < cover.y) return null;
-    if (x < cover.x || x > cover.x + COVER_W) return null;
-    // From the END of the path going backward toward start — first hit closer
-    // to the original shot position.
-    const dir = Math.sign(y1 - y0) || -1;
-    const yFrom = (dir < 0) ? y0 : y0;
-    const yTo   = (dir < 0) ? y1 : y1;
-    // Iterate small steps along the path.
-    const stepCount = Math.max(1, Math.ceil(Math.abs(y1 - y0) / 2));
-    for (let i = 0; i <= stepCount; i++) {
-      const t = i / stepCount;
-      const py = y0 + (y1 - y0) * t;
-      if (pointInCover(x, py, cover)) return py;
+  // ---- Collision: ball vs axis-aligned rectangle ----
+  // Used by drop-targets. Computes the closest point on the rect, derives the
+  // normal from that point to the ball, and applies a standard reflection.
+  function collideRect(ball, rx, ry, rw, rh, restitution) {
+    const cx = clamp(ball.x, rx, rx + rw);
+    const cy = clamp(ball.y, ry, ry + rh);
+    const dx = ball.x - cx, dy = ball.y - cy;
+    const d = len(dx, dy);
+    if (d >= ball.r) return false;
+    let nx, ny;
+    if (d < 0.0001) {
+      // ball center inside rect — pick the nearest edge as the eject direction
+      const midX = rx + rw / 2, midY = ry + rh / 2;
+      const distLeft  = ball.x - rx;
+      const distRight = rx + rw - ball.x;
+      const distTop   = ball.y - ry;
+      const distBot   = ry + rh - ball.y;
+      const m = Math.min(distLeft, distRight, distTop, distBot);
+      if (m === distLeft)       { nx = -1; ny = 0; }
+      else if (m === distRight) { nx =  1; ny = 0; }
+      else if (m === distTop)   { nx = 0; ny = -1; }
+      else                       { nx = 0; ny = 1; }
+    } else {
+      nx = dx / d; ny = dy / d;
     }
-    return null;
+    ball.x = cx + nx * ball.r;
+    ball.y = cy + ny * ball.r;
+    const vDotN = ball.vx * nx + ball.vy * ny;
+    if (vDotN < 0) {
+      ball.vx -= (1 + restitution) * vDotN * nx;
+      ball.vy -= (1 + restitution) * vDotN * ny;
+    }
+    return true;
   }
 
-  // ---- Step ----
+  // ---- Collision: ball vs segment ----
+  function collideSegment(ball, ax, ay, bx, by, restitution) {
+    const cp = closestOnSegment(ball.x, ball.y, ax, ay, bx, by);
+    const dx = ball.x - cp.x, dy = ball.y - cp.y;
+    const d = len(dx, dy);
+    if (d >= ball.r) return false;
+    let nx, ny;
+    if (d === 0) {
+      // ball center exactly on segment — pick segment normal
+      const sx = bx - ax, sy = by - ay;
+      const sl = len(sx, sy) || 1;
+      nx = -sy / sl; ny = sx / sl;
+    } else {
+      nx = dx / d; ny = dy / d;
+    }
+    ball.x = cp.x + nx * ball.r;
+    ball.y = cp.y + ny * ball.r;
+    const vDotN = ball.vx * nx + ball.vy * ny;
+    if (vDotN < 0) {
+      ball.vx -= (1 + restitution) * vDotN * nx;
+      ball.vy -= (1 + restitution) * vDotN * ny;
+    }
+    return true;
+  }
+
+  // ---- Collision: ball vs flipper (rotating capsule) ----
+  // Two-phase: reflect (relative velocity) + scoop (always inherit a chunk of
+  // the flipper's surface velocity if it's actively rotating). The scoop is
+  // what makes a flipper kick a ball that's resting on its tip — without it
+  // the bounce direction is fine but the magnitude vanishes when the ball is
+  // moving with the flipper rather than into it.
+  function collideFlipper(ball, flipper) {
+    const [px, py] = flipper.pivot;
+    const tipX = px + Math.cos(flipper.angle) * FLIPPER_LEN;
+    const tipY = py + Math.sin(flipper.angle) * FLIPPER_LEN;
+    const cp = closestOnSegment(ball.x, ball.y, px, py, tipX, tipY);
+    const dx = ball.x - cp.x, dy = ball.y - cp.y;
+    const d = len(dx, dy);
+    const minD = ball.r + FLIPPER_THICK / 2;
+    if (d >= minD) return false;
+    let nx, ny;
+    if (d < 0.0001) {
+      // Ball center on segment — pick perpendicular pointing "up" into play.
+      const sx = tipX - px, sy = tipY - py;
+      const sl = len(sx, sy) || 1;
+      nx = sy / sl; ny = -sx / sl;
+      if (ny > 0) { nx = -nx; ny = -ny; } // bias upward
+    } else {
+      nx = dx / d; ny = dy / d;
+    }
+    ball.x = cp.x + nx * minD;
+    ball.y = cp.y + ny * minD;
+
+    // Surface velocity at contact point: omega × (P - pivot).
+    // In 2D this is perpendicular: v_surf = omega * (-ry, rx).
+    const rx = cp.x - px, ry = cp.y - py;
+    const surfVX = -flipper.omega * ry;
+    const surfVY =  flipper.omega * rx;
+
+    // Reflect relative velocity (so a static flipper still bounces the ball).
+    const relVX = ball.vx - surfVX;
+    const relVY = ball.vy - surfVY;
+    const vDotN = relVX * nx + relVY * ny;
+    if (vDotN < 0) {
+      const restitution = 0.6;
+      ball.vx -= (1 + restitution) * vDotN * nx;
+      ball.vy -= (1 + restitution) * vDotN * ny;
+    }
+
+    // Scoop: when the flipper is mid-swing, dump a strong dose of surface
+    // velocity into the ball regardless of whether the bounce fired. This is
+    // what makes the tip kick reliable — the ball can be sitting on the tip
+    // (vDotN ≈ 0) and still get launched.
+    if (Math.abs(flipper.omega) > 0.04) {
+      ball.vx += surfVX * 0.55;
+      ball.vy += surfVY * 0.55;
+    }
+    return true;
+  }
+
+  // ---- Update ----
   function step() {
-    if (!state || state.result) return;
+    if (!state) return;
 
-    // Player movement: keys or mouse follow.
-    if (input.left)  state.player.x -= PLAYER_SPEED;
-    if (input.right) state.player.x += PLAYER_SPEED;
-    if (input.mouseX != null) {
-      const dx = input.mouseX - state.player.x;
-      state.player.x += clamp(dx, -PLAYER_SPEED * 1.6, PLAYER_SPEED * 1.6);
-    }
-    state.player.x = clamp(state.player.x, PLAYER_W / 2 + 6, W - PLAYER_W / 2 - 6);
-
-    if (state.player.invuln > 0) state.player.invuln--;
-
-    // Projectiles
-    for (const shot of state.shots) {
-      if (shot.removed) continue;
-      const prevY = shot.y;
-      shot.y += shot.vy;
-
-      // Slice the FIRST enemy whose pixel-column the shot's x passes through.
-      // Single hit per shot — the shot is consumed after the cut.
-      for (const e of state.enemies) {
-        if (!e.alive) continue;
-        const a = enemyAABB(e);
-        if (!a) continue;
-        if (shot.x < a.minX || shot.x > a.maxX) continue;
-        const segLo = Math.min(prevY, shot.y);
-        const segHi = Math.max(prevY, shot.y);
-        if (segHi < a.minY || segLo > a.maxY) continue;
-        const sliceCol = shotHitsEnemyColumn(shot.x, e);
-        if (sliceCol < 0) continue; // shot passes through an empty column
-
-        const [leftCells, rightCells] = sliceBitmap(e.cells, e.bw, e.bh, sliceCol);
-        const leftCount = countAliveCells(leftCells);
-        const rightCount = countAliveCells(rightCells);
-        // Bigger half = the one with more cells. Threshold is taken against
-        // the original total (kept on the enemy), so repeated slices keep
-        // chipping until the remaining body drops below 50% of the original.
-        let keepCells, dropCells, dropSign, keepCount, dropCount;
-        if (leftCount >= rightCount) {
-          keepCells = leftCells; keepCount = leftCount;
-          dropCells = rightCells; dropCount = rightCount;
-          dropSign = +1; // dropped (right) piece flies right
-        } else {
-          keepCells = rightCells; keepCount = rightCount;
-          dropCells = leftCells;  dropCount = leftCount;
-          dropSign = -1;
-        }
-
-        if (keepCount >= e.totalCells * ENEMY_DEATH_FRACTION) {
-          // Enemy survives — body shrinks, smaller half flies off.
-          e.cells = keepCells;
-          state.score += 2;
-          if (dropCount > 0) {
-            const frag = makeFragment(dropCells, e, dropSign);
-            if (frag) state.fragments.push(frag);
-          }
-        } else {
-          // Below survival threshold — both halves fall, enemy dies.
-          e.alive = false;
-          state.enemiesLeft--;
-          state.score += 12;
-          if (leftCount > 0) {
-            const lf = makeFragment(leftCells, e, -1);
-            if (lf) state.fragments.push(lf);
-          }
-          if (rightCount > 0) {
-            const rf = makeFragment(rightCells, e, +1);
-            if (rf) state.fragments.push(rf);
-          }
-        }
-        sfxSlice();
-        shot.removed = true;
-        break;
-      }
-      if (shot.removed) continue;
-
-      // Cover damage — first cover the shot enters this frame stops it.
-      for (const cov of state.covers) {
-        const hitY = sweepShotIntoCover(shot.x, prevY, shot.y, cov);
-        if (hitY != null) {
-          damageCoverAt(cov, shot.x, hitY, HIT_RADIUS_SHOT);
-          shot.removed = true;
-          sfxThud();
-          break;
-        }
-      }
-
-      if (shot.y < -10) shot.removed = true;
-    }
-    state.shots = state.shots.filter(s => !s.removed);
-
-    // Enemy march — formation moves on a timer that speeds up as enemies die.
-    state.marchTimer += 16; // approx ms per frame at 60 fps
-    // Speed up with kills and with wave progression — wave 1 starts at base,
-    // wave 5+ runs at ~0.55× base. Per-frame check, simple.
-    const waveFactor = Math.max(0.55, 1 - (state.wave - 1) * 0.08);
-    const killFactor = 0.3 + 0.7 * state.enemiesLeft / (ENEMY_ROWS * ENEMY_COLS);
-    const interval = MARCH_INTERVAL_BASE * killFactor * waveFactor;
-    if (state.marchTimer >= interval) {
-      state.marchTimer = 0;
-      // Check formation bounds (using the tight AABB of remaining cells).
-      let leftEdge = Infinity, rightEdge = -Infinity;
-      for (const e of state.enemies) {
-        if (!e.alive) continue;
-        const a = enemyAABB(e);
-        if (!a) continue;
-        if (a.minX < leftEdge) leftEdge = a.minX;
-        if (a.maxX > rightEdge) rightEdge = a.maxX;
-      }
-      const wouldHitWall =
-        (state.marchDir > 0 && rightEdge + MARCH_STEP_X >= W - 6) ||
-        (state.marchDir < 0 && leftEdge - MARCH_STEP_X <= 6);
-      if (wouldHitWall) {
-        for (const e of state.enemies) {
-          if (!e.alive) continue;
-          e.cy += MARCH_STEP_Y;
-        }
-        state.marchDir = -state.marchDir;
+    // Flipper angular update — drive toward target with constant angular
+    // velocity, snap at endpoints.
+    for (const f of [state.flippers.left, state.flippers.right]) {
+      const pressed = f === state.flippers.left ? input.left : input.right;
+      const target = pressed ? f.active : f.rest;
+      const oldAngle = f.angle;
+      // For left flipper, active < rest (we rotate toward smaller angle).
+      // For right flipper (mirrored), active > rest (rotate toward larger).
+      const diff = target - f.angle;
+      if (Math.abs(diff) < 0.001) {
+        f.omega = 0;
       } else {
-        const dx = MARCH_STEP_X * state.marchDir;
-        for (const e of state.enemies) {
-          if (!e.alive) continue;
-          e.cx += dx;
+        const stepA = Math.sign(diff) * FLIPPER_OMEGA;
+        if (Math.abs(stepA) > Math.abs(diff)) f.angle = target;
+        else f.angle += stepA;
+        f.omega = f.angle - oldAngle;
+      }
+      if (f.contactCooldown > 0) f.contactCooldown--;
+    }
+
+    const ball = state.ball;
+    if (!ball) return;
+
+    if (ball.stuck) {
+      // sit at the top of the drop tube
+      ball.x = (TUBE_X + W) / 2;
+      ball.y = 26;
+      ball.vx = 0;
+      ball.vy = 0;
+      // Keep prevBallY in sync so the spinner doesn't pop on the first frame
+      // after a respawn (the old prevBallY would be from the drained ball).
+      state.prevBallY = ball.y;
+      return;
+    }
+
+    // gravity + friction
+    ball.vy += GRAVITY;
+    ball.vx *= FRICTION;
+    ball.vy *= FRICTION;
+
+    // speed cap to avoid tunneling
+    const sp = len(ball.vx, ball.vy);
+    if (sp > MAX_SPEED) {
+      ball.vx = ball.vx / sp * MAX_SPEED;
+      ball.vy = ball.vy / sp * MAX_SPEED;
+    }
+
+    // Remember the previous Y for the spinner crossing detection.
+    state.prevBallY = ball.y;
+    ball.x += ball.vx;
+    ball.y += ball.vy;
+
+    // ---- Collisions ----
+    // Walls (no sound on every tick; only quiet open-hat occasionally)
+    for (const w of state.walls) {
+      if (collideSegment(ball, w.p1[0], w.p1[1], w.p2[0], w.p2[1], 0.6)) {
+        // open hi-hat is the wall sound; muted to keep mix sparse
+        const speed = len(ball.vx, ball.vy);
+        if (speed > 3.5) trigger(voiceOpenHat);
+      }
+    }
+
+    // Bumpers — circles, generous restitution
+    for (const b of state.bumpers) {
+      if (collideCircle(ball, b.x, b.y, b.r, 0.85)) {
+        // bonus radial impulse for that classic pinball pop
+        const dx = ball.x - b.x, dy = ball.y - b.y;
+        const d = len(dx, dy) || 1;
+        ball.vx += dx / d * 2.6;
+        ball.vy += dy / d * 2.6;
+        b.flash = 8;
+        state.score += 10;
+        trigger(b.voice, b.leadDeg);
+      }
+    }
+
+    // Slingshots — collide against the two diagonals only. The third edge
+    // (back, vertical at x=0 or x=W) is intentionally skipped: it coincides
+    // with the outer wall, and having two segments meet at the same vertex
+    // produces a corner trap where the ball gets pinned by competing normals.
+    // The outer wall on its own already seals the back of the slingshot.
+    for (const s of state.slings) {
+      const v = s.verts;
+      // Safety net: if the ball is somehow inside the triangle (tunneling at
+      // high speed or a numerically degenerate frame), eject it just below
+      // the slingshot so it lands in the inlane instead of jittering forever.
+      if (pointInTriangle(ball.x, ball.y, v[0][0], v[0][1], v[1][0], v[1][1], v[2][0], v[2][1])) {
+        const maxY = Math.max(v[0][1], v[1][1], v[2][1]);
+        ball.y = maxY + ball.r + 2;
+        // Nudge x toward the playfield interior (away from the outer wall side)
+        const isLeft = (v[0][0] + v[1][0] + v[2][0]) / 3 < W / 2;
+        ball.x = isLeft ? Math.max(ball.x, 22) : Math.min(ball.x, W - 22);
+        ball.vy = Math.max(ball.vy, 2);
+      }
+      let voiceFired = false;
+      for (let i = 0; i < 3; i++) {
+        if (i === s.backIdx) continue;
+        const a = v[i], b = v[(i + 1) % 3];
+        if (collideSegment(ball, a[0], a[1], b[0], b[1], 0.95)) {
+          if (!voiceFired && s.cooldown === 0) {
+            s.flash = 8;
+            state.score += 5;
+            trigger(s.voice, s.leadDeg);
+            s.cooldown = 6;
+            voiceFired = true;
+          }
+        }
+      }
+      if (s.cooldown > 0) s.cooldown--;
+    }
+
+    // Drop targets — knocked down on contact, respawn together with a fill.
+    for (const t of state.targets) {
+      if (!t.alive) continue;
+      if (collideRect(ball, t.x, t.y, t.w, t.h, 0.55)) {
+        t.alive = false;
+        t.flash = 8;
+        state.score += 25;
+        trigger(t.voice, t.leadDeg, 2); // play the pitched accent an octave higher
+      }
+    }
+    // If the whole row was just cleared, schedule a respawn + fill.
+    if (state.targetsResetAt === 0 && state.targets.every(t => !t.alive)) {
+      state.targetsResetAt = performance.now() + TARGET_RESET_MS;
+      const ctx2 = ensureAudio();
+      if (ctx2) voiceFill(quantize(ctx2.currentTime));
+    }
+    if (state.targetsResetAt !== 0 && performance.now() >= state.targetsResetAt) {
+      for (const t of state.targets) t.alive = true;
+      state.targetsResetAt = 0;
+    }
+
+    // Spinner — pass-through (no collision), triggers on each line crossing.
+    // Each pass bumps the angular velocity so the visible bar keeps spinning;
+    // friction decays it. Cooldown guards against a single fast pass firing
+    // twice in adjacent frames at the segment boundary.
+    const spin = state.spinner;
+    if (spin) {
+      const prevSide = (state.prevBallY !== undefined ? state.prevBallY : ball.y) < spin.y;
+      const curSide  = ball.y < spin.y;
+      if (prevSide !== curSide && Math.abs(ball.x - spin.x) < spin.w / 2 && spin.cooldown === 0) {
+        trigger(spin.voice);
+        state.score += 3;
+        // Direction of pass sets rotation direction.
+        spin.omega += (curSide ? -0.45 : 0.45);
+        spin.cooldown = 3;
+        spin.flash = 6;
+      }
+      spin.angle += spin.omega;
+      spin.omega *= 0.94;
+      if (Math.abs(spin.omega) < 0.005) spin.omega = 0;
+      if (spin.cooldown > 0) spin.cooldown--;
+      if (spin.flash > 0) spin.flash--;
+    }
+
+    // Flippers
+    for (const key of ['left', 'right']) {
+      const f = state.flippers[key];
+      if (collideFlipper(ball, f)) {
+        if (f.contactCooldown === 0) {
+          state.score += 1;
+          trigger(f.voice);
+          f.contactCooldown = 6;
         }
       }
     }
 
-    // Enemy reached the danger line → instant game over
-    for (const e of state.enemies) {
-      if (!e.alive) continue;
-      const a = enemyAABB(e);
-      if (!a) continue;
-      if (a.maxY >= ENEMY_DANGER_Y) {
-        endGame(false);
-        return;
+    // Floor / drain check — drain only happens through the gap; the rest of
+    // the bottom is treated as walls so a rolling ball doesn't escape.
+    if (ball.y - ball.r > H + 20) {
+      onDrain();
+    } else if (ball.y + ball.r > H - 1) {
+      // Solid floor outside the drain gap
+      if (ball.x < DRAIN_LEFT - ball.r || ball.x > DRAIN_RIGHT + ball.r) {
+        ball.y = H - 1 - ball.r;
+        if (ball.vy > 0) ball.vy *= -0.5;
+      } else if (ball.y > H + 8) {
+        // ball has fully passed the drain mouth
+        onDrain();
       }
     }
 
-    // Enemy fire — periodically a random alive alien drops a shot.
-    // Probability scales with wave number for a slow difficulty ramp.
-    if (Math.random() < ENEMY_SHOT_PROB_BASE * state.wave) {
-      const alive = state.enemies.filter(e => e.alive);
-      if (alive.length > 0) {
-        // Random alive alien fires — origin is the shooter's lower edge.
-        const shooter = alive[Math.floor(Math.random() * alive.length)];
-        const a = enemyAABB(shooter);
-        if (a) {
-          const sx = (a.minX + a.maxX) / 2;
-          state.enemyShots.push({ x: sx, y: a.maxY + 4, vy: ENEMY_SHOT_SPEED });
-          sfxEnemyShoot();
-        }
-      }
-    }
-
-    // Move enemy shots and check what they hit.
-    for (const es of state.enemyShots) {
-      if (es.removed) continue;
-      es.y += es.vy;
-
-      // Player hit (only if not invuln)
-      if (state.player.invuln === 0) {
-        const px = state.player.x;
-        if (es.x > px - PLAYER_W / 2 && es.x < px + PLAYER_W / 2 &&
-            es.y > PLAYER_Y - PLAYER_H / 2 && es.y < PLAYER_Y + PLAYER_H / 2) {
-          es.removed = true;
-          state.lives--;
-          state.player.invuln = 90;
-          updateHUD();
-          sfxHurt();
-          if (state.lives <= 0) { endGame(false); return; }
-          continue;
-        }
-      }
-
-      // Cover hit — punch a hole
-      let hitCover = false;
-      for (const cov of state.covers) {
-        if (pointInCover(es.x, es.y, cov)) {
-          damageCoverAt(cov, es.x, es.y, HIT_RADIUS_SHOT);
-          es.removed = true;
-          hitCover = true;
-          sfxThud();
-          break;
-        }
-      }
-      if (hitCover) continue;
-
-      // Off-screen
-      if (es.y > H + 10) es.removed = true;
-    }
-    state.enemyShots = state.enemyShots.filter(es => !es.removed);
-
-    // Fragments — physics + collisions
-    for (const f of state.fragments) {
-      if (f.removed) continue;
-      f.vx *= FRAG_FRICTION;
-      f.vy += GRAVITY;
-      f.cx += f.vx;
-      f.cy += f.vy;
-      f.angle += f.omega;
-      f.omega *= FRAG_ANGULAR_DAMP;
-
-      // Cover hit (AABB vs centroid first — covers are small enough)
-      for (const cov of state.covers) {
-        if (f.cx < cov.x || f.cx > cov.x + COVER_W) continue;
-        if (f.cy < cov.y || f.cy > cov.y + COVER_H) continue;
-        if (pointInCover(f.cx, f.cy, cov)) {
-          damageCoverAt(cov, f.cx, f.cy, HIT_RADIUS_FRAG);
-          f.removed = true;
-          sfxThud();
-          break;
-        }
-      }
-      if (f.removed) continue;
-
-      // Player hit — quick AABB check on player rect using fragment centroid.
-      // The fragment is small (~20 px) so checking the centroid against a
-      // slightly inflated player rect is enough.
-      const px = state.player.x;
-      if (state.player.invuln === 0 &&
-          f.cx > px - PLAYER_W / 2 - 6 && f.cx < px + PLAYER_W / 2 + 6 &&
-          f.cy > PLAYER_Y - PLAYER_H / 2 - 6 && f.cy < PLAYER_Y + PLAYER_H / 2 + 6) {
-        f.removed = true;
-        state.lives--;
-        state.player.invuln = 90; // ~1.5s of invuln to avoid double-hit
-        updateHUD();
-        sfxHurt();
-        if (state.lives <= 0) { endGame(false); return; }
-      }
-
-      // Off the bottom — quietly remove (no thud if it didn't hit anything)
-      if (f.cy > H + 30) f.removed = true;
-      if (f.removed) continue;
-
-      // Decay: after a brief intact period, the fragment sheds cells each
-      // frame. Most sheddings just vanish — only a fraction become visible
-      // falling particles. Tuning knob: PARTICLE_SPAWN_CHANCE.
-      f.age++;
-      if (f.age > 9 && f.aliveCells.length > 0) {
-        // Shed rate (cells removed from the half per frame).
-        const shedN = Math.max(1, Math.ceil(f.aliveCells.length * 0.07));
-        const PARTICLE_SPAWN_CHANCE = 0.30;
-        const cosA = Math.cos(f.angle);
-        const sinA = Math.sin(f.angle);
-        for (let i = 0; i < shedN && f.aliveCells.length > 0; i++) {
-          // Pick a random alive cell, swap-pop for O(1) removal.
-          const idx = Math.floor(Math.random() * f.aliveCells.length);
-          const cellRC = f.aliveCells[idx];
-          f.aliveCells[idx] = f.aliveCells[f.aliveCells.length - 1];
-          f.aliveCells.pop();
-          const [cr, cc] = cellRC;
-          f.cells[cr][cc] = false;
-          // Only some sheddings actually become physical/visible particles.
-          if (Math.random() >= PARTICLE_SPAWN_CHANCE) continue;
-          // Compute the cell's world position (account for rotation).
-          const lx = -f.localCx + (cc - f.bw / 2 + 0.5) * f.cs;
-          const ly = -f.localCy + (cr - f.bh / 2 + 0.5) * f.cs;
-          const wx = f.cx + cosA * lx - sinA * ly;
-          const wy = f.cy + sinA * lx + cosA * ly;
-          state.particles.push({
-            x: wx, y: wy,
-            // Inherit fragment velocity + tiny outward drift so the cloud spreads
-            vx: f.vx + (Math.random() - 0.5) * 1.6,
-            vy: f.vy + (Math.random() - 0.5) * 0.8,
-            size: f.cs,
-            removed: false,
-          });
-        }
-        if (f.aliveCells.length === 0) f.removed = true;
-      }
-    }
-    state.fragments = state.fragments.filter(f => !f.removed);
-
-    // Particles — independent gravity. Each particle is dangerous: a single
-    // one is tiny (~one cover cell of damage), but a cloud of dissolving
-    // alien rains real pressure on covers and player.
-    for (const p of state.particles) {
-      if (p.removed) continue;
-      p.vy += GRAVITY;
-      p.vx *= FRAG_FRICTION;
-      p.x += p.vx;
-      p.y += p.vy;
-
-      // Cover punch — tiny radius (≈1 cell knocked out).
-      let hitCover = false;
-      for (const cov of state.covers) {
-        if (pointInCover(p.x, p.y, cov)) {
-          damageCoverAt(cov, p.x, p.y, 3);
-          p.removed = true;
-          hitCover = true;
-          break;
-        }
-      }
-      if (hitCover) continue;
-
-      // Player hit — particle is always consumed on contact; damage only if
-      // the player isn't in i-frames (so a single particle, not a cloud,
-      // does the canonical -1 life and arms invuln).
-      const px = state.player.x;
-      if (p.x > px - PLAYER_W / 2 && p.x < px + PLAYER_W / 2 &&
-          p.y > PLAYER_Y - PLAYER_H / 2 && p.y < PLAYER_Y + PLAYER_H / 2) {
-        if (state.player.invuln === 0) {
-          state.lives--;
-          state.player.invuln = 90;
-          updateHUD();
-          sfxHurt();
-          if (state.lives <= 0) { endGame(false); return; }
-        }
-        p.removed = true;
-        continue;
-      }
-
-      if (p.y > H + 20) p.removed = true;
-    }
-    state.particles = state.particles.filter(p => !p.removed);
-
-    // Wave cleared — spawn the next wave once all fragments have landed.
-    if (state.enemiesLeft === 0 && state.fragments.length === 0) {
-      nextWave();
-    }
+    // Side and top safety walls (in case of fast tunneling near corners)
+    if (ball.x - ball.r < 0) { ball.x = ball.r; if (ball.vx < 0) ball.vx *= -0.6; }
+    if (ball.x + ball.r > W) { ball.x = W - ball.r; if (ball.vx > 0) ball.vx *= -0.6; }
+    if (ball.y - ball.r < 0) { ball.y = ball.r; if (ball.vy < 0) ball.vy *= -0.6; }
   }
 
-  function nextWave() {
-    state.wave++;
-    state.enemies = buildEnemies();
-    state.enemiesLeft = ENEMY_ROWS * ENEMY_COLS;
-    state.marchDir = 1;
-    state.marchTimer = 0;
-    state.msg = 'WAVE ' + state.wave;
-    state.msgUntil = performance.now() + 1500;
+  function onDrain() {
+    trigger(voiceDrain);
+    state.ballsLeft -= 1;
     updateHUD();
-  }
-
-  // Build a fragment from a sliced bitmap half. The fragment keeps the full
-  // bitmap dimensions but with only its half of the cells filled; we anchor
-  // its rotation on the cells' center-of-mass so it tumbles naturally.
-  // aliveCells caches the list of (row, col) pairs we still have, so the
-  // decay loop can sample random survivors in O(1) instead of scanning the
-  // whole bitmap every frame.
-  function makeFragment(cells, sourceEnemy, hSign) {
-    const cent = cellsCentroid(cells, sourceEnemy.bw, sourceEnemy.bh, sourceEnemy.cs);
-    if (!cent) return null;
-    const [localCx, localCy] = cent;
-    const aliveCells = [];
-    for (let r = 0; r < sourceEnemy.bh; r++) {
-      for (let c = 0; c < sourceEnemy.bw; c++) {
-        if (cells[r][c]) aliveCells.push([r, c]);
-      }
+    if (state.ballsLeft <= 0) {
+      state.result = 'over';
+      running = false;
+      showOverlay('game over', `score · ${state.score}`, 'PLAY AGAIN');
+      return;
     }
-    return {
-      cells,
-      aliveCells,
-      bw: sourceEnemy.bw,
-      bh: sourceEnemy.bh,
-      cs: sourceEnemy.cs,
-      cx: sourceEnemy.cx + localCx,
-      cy: sourceEnemy.cy + localCy,
-      localCx, localCy,
-      vx: hSign * rand(1.0, 2.2),
-      vy: rand(-1.2, -0.1),
-      angle: 0,
-      omega: hSign * rand(0.04, 0.10) * (Math.random() < 0.5 ? -1 : 1),
-      age: 0,
-      removed: false,
-    };
+    // Reset to plunger
+    state.ball = makeBall();
+    showMsg(`BALL ${4 - state.ballsLeft} / 3`);
   }
 
-  function endGame(win) {
-    state.result = win ? 'win' : 'lose';
-    running = false;
-    if (win) sfxWin(); else sfxGameOver();
-    showOverlay(
-      win ? 'cleared' : 'game over',
-      'score · ' + state.score,
-      'PLAY AGAIN'
-    );
-  }
+  // ---- Draw ----
+  function drawTable() {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, W, H);
 
-  // ---- Drawing ----
-  function drawStarField() {
-    // Subtle scatter — sparse dots so the playfield doesn't read as totally
-    // empty. Deterministic positions so they don't flicker between frames.
-    if (!state.stars) {
-      state.stars = [];
-      for (let i = 0; i < 38; i++) state.stars.push([rand(0, W), rand(0, H), rand(0.4, 1.2)]);
-    }
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
-    for (const [sx, sy, sr] of state.stars) {
-      ctx.beginPath();
-      ctx.arc(sx, sy, sr, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
+    // Pulse the frame on every quarter beat.
+    const stepIdx = currentStepIdx();
+    const pulse = (stepIdx % 4 === 0) && (lastVisualStep !== stepIdx);
+    if (pulse) lastVisualStep = stepIdx;
+    const stepFrac = ((audioCtx ? audioCtx.currentTime - beatStart : 0) / stepDur()) % 4;
+    const beatPulse = Math.max(0, 1 - (stepFrac % 1)) * 0.6 + 0.4; // 0.4..1.0
 
-  function drawEnemies() {
-    ctx.fillStyle = '#000';
-    for (const e of state.enemies) {
-      if (!e.alive) continue;
-      const ox = e.cx - e.bw * e.cs / 2;
-      const oy = e.cy - e.bh * e.cs / 2;
-      for (let r = 0; r < e.bh; r++) {
-        for (let c = 0; c < e.bw; c++) {
-          if (!e.cells[r][c]) continue;
-          ctx.fillRect(ox + c * e.cs, oy + r * e.cs, e.cs, e.cs);
-        }
-      }
-    }
-  }
-
-  function drawFragments() {
-    ctx.fillStyle = '#000';
-    for (const f of state.fragments) {
-      ctx.save();
-      ctx.translate(f.cx, f.cy);
-      ctx.rotate(f.angle);
-      // Cell positions are shifted by -localCx/Cy so the rotation pivot is
-      // the visual center-of-mass rather than the original sprite center.
-      const ox = -f.localCx - f.bw * f.cs / 2;
-      const oy = -f.localCy - f.bh * f.cs / 2;
-      for (let r = 0; r < f.bh; r++) {
-        for (let c = 0; c < f.bw; c++) {
-          if (!f.cells[r][c]) continue;
-          ctx.fillRect(ox + c * f.cs, oy + r * f.cs, f.cs, f.cs);
-        }
-      }
-      ctx.restore();
-    }
-  }
-
-  function drawEnemyShots() {
-    if (!state.enemyShots) return;
-    ctx.fillStyle = '#000';
-    for (const s of state.enemyShots) {
-      // simple zigzag-ish look: two stacked dashes for a "laser" feel
-      ctx.fillRect(s.x - 1, s.y - ENEMY_SHOT_LEN / 2, 2, 4);
-      ctx.fillRect(s.x - 1, s.y - ENEMY_SHOT_LEN / 2 + 6, 2, 4);
-    }
-  }
-
-  function drawParticles() {
-    if (!state.particles) return;
-    ctx.fillStyle = '#000';
-    for (const p of state.particles) {
-      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
-    }
-  }
-
-  function drawCovers() {
-    for (const cov of state.covers) {
-      for (let r = 0; r < COVER_ROWS; r++) {
-        for (let c = 0; c < COVER_COLS; c++) {
-          if (!cov.cells[r][c]) continue;
-          const x = cov.x + c * COVER_CELL;
-          const y = cov.y + r * COVER_CELL;
-          ctx.fillStyle = '#000';
-          ctx.fillRect(x, y, COVER_CELL, COVER_CELL);
-        }
-      }
-    }
-  }
-
-  function drawPlayer() {
-    const p = state.player;
-    const blink = p.invuln > 0 && (p.invuln % 8 < 4);
-    ctx.save();
-    ctx.translate(p.x, PLAYER_Y);
-    ctx.fillStyle = blink ? '#fff' : p.color;
-    ctx.strokeStyle = '#000';
     ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#000';
+
+    // Outer frame
+    ctx.strokeRect(0.5, 0.5, W - 1, H - 1);
+
+    // Walls (segments)
     ctx.beginPath();
-    ctx.moveTo(0, -PLAYER_H / 2);
-    ctx.lineTo(PLAYER_W / 2, PLAYER_H / 2);
-    ctx.lineTo(PLAYER_W / 4, PLAYER_H / 2);
-    ctx.lineTo(PLAYER_W / 4, PLAYER_H / 4);
-    ctx.lineTo(-PLAYER_W / 4, PLAYER_H / 4);
-    ctx.lineTo(-PLAYER_W / 4, PLAYER_H / 2);
-    ctx.lineTo(-PLAYER_W / 2, PLAYER_H / 2);
-    ctx.closePath();
+    for (const w of state.walls) {
+      ctx.moveTo(w.p1[0], w.p1[1]);
+      ctx.lineTo(w.p2[0], w.p2[1]);
+    }
+    ctx.stroke();
+
+    // Drain gap (visualize the floor outside the drain as a line)
+    ctx.beginPath();
+    ctx.moveTo(0, H - 1);
+    ctx.lineTo(DRAIN_LEFT, H - 1);
+    ctx.moveTo(DRAIN_RIGHT, H - 1);
+    ctx.lineTo(W, H - 1);
+    ctx.stroke();
+
+    // Drop-tube exit hint — a soft dashed continuation below the tube wall
+    // so the player can read where the ball lands in the playfield.
+    ctx.beginPath();
+    ctx.setLineDash([3, 5]);
+    ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+    ctx.moveTo(TUBE_X, TUBE_BOTTOM);
+    ctx.lineTo(TUBE_X, TUBE_BOTTOM + 60);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = '#000';
+
+    // Step pulse dot — top center (very small)
+    const dotR = 2 + Math.floor(beatPulse * 2);
+    ctx.beginPath();
+    ctx.arc(W / 2, 14, dotR, 0, Math.PI * 2);
+    ctx.fillStyle = '#000';
+    ctx.fill();
+  }
+
+  function drawBumpers() {
+    for (const b of state.bumpers) {
+      const filled = b.flash > 0;
+      if (filled) ctx.fillStyle = '#000';
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+      if (filled) ctx.fill();
+      ctx.stroke();
+      // small inner ring
+      ctx.beginPath();
+      ctx.arc(b.x, b.y, b.r - 6, 0, Math.PI * 2);
+      ctx.strokeStyle = filled ? '#fff' : '#000';
+      ctx.stroke();
+      // label
+      ctx.fillStyle = filled ? '#fff' : '#000';
+      ctx.font = '8px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(b.name, b.x, b.y);
+      if (b.flash > 0) b.flash--;
+    }
+  }
+
+  function drawSlings() {
+    for (const s of state.slings) {
+      const filled = s.flash > 0;
+      ctx.beginPath();
+      ctx.moveTo(s.verts[0][0], s.verts[0][1]);
+      ctx.lineTo(s.verts[1][0], s.verts[1][1]);
+      ctx.lineTo(s.verts[2][0], s.verts[2][1]);
+      ctx.closePath();
+      if (filled) {
+        ctx.fillStyle = '#000';
+        ctx.fill();
+      }
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#000';
+      ctx.stroke();
+      if (s.flash > 0) s.flash--;
+    }
+  }
+
+  function drawFlippers() {
+    for (const key of ['left', 'right']) {
+      const f = state.flippers[key];
+      const [px, py] = f.pivot;
+      const tipX = px + Math.cos(f.angle) * FLIPPER_LEN;
+      const tipY = py + Math.sin(f.angle) * FLIPPER_LEN;
+      ctx.lineWidth = FLIPPER_THICK;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#000';
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(tipX, tipY);
+      ctx.stroke();
+      // pivot dot
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(px, py, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#000';
+      ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
+  }
+
+  function drawBall() {
+    if (!state.ball) return;
+    const b = state.ball;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#000';
+    ctx.fillStyle = '#fff';
     ctx.fill();
     ctx.stroke();
-    ctx.restore();
   }
 
-  function drawShots() {
-    ctx.fillStyle = '#000';
-    for (const s of state.shots) {
-      ctx.fillRect(s.x - 1, s.y - SHOT_LEN / 2, 2, SHOT_LEN);
+  function drawTargets() {
+    if (!state.targets) return;
+    for (const t of state.targets) {
+      if (!t.alive) {
+        // Stub: short hash where the target used to be.
+        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        ctx.moveTo(t.x + t.w / 2, t.y);
+        ctx.lineTo(t.x + t.w / 2, t.y + t.h);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        continue;
+      }
+      ctx.fillStyle = t.flash > 0 ? '#fff' : '#000';
+      ctx.fillRect(t.x, t.y, t.w, t.h);
+      ctx.lineWidth = 1.5;
+      ctx.strokeStyle = '#000';
+      ctx.strokeRect(t.x + 0.5, t.y + 0.5, t.w - 1, t.h - 1);
+      if (t.flash > 0) t.flash--;
     }
   }
 
-  function drawGround() {
+  function drawSpinner() {
+    const sp = state.spinner;
+    if (!sp) return;
+    ctx.save();
+    ctx.translate(sp.x, sp.y);
+    ctx.rotate(sp.angle);
+    ctx.lineWidth = sp.flash > 0 ? 3 : 2;
     ctx.strokeStyle = '#000';
-    ctx.lineWidth = 1.5;
+    const h = sp.w / 2;
+    // The bar itself.
     ctx.beginPath();
-    ctx.moveTo(0, H - 0.75);
-    ctx.lineTo(W, H - 0.75);
+    ctx.moveTo(-h, 0);
+    ctx.lineTo(h, 0);
+    ctx.stroke();
+    // Tip markers — circles at each end help the rotation read visually.
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.arc(-h, 0, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(h, 0, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    // Pivot dot in the center, on top of the bar (no rotation).
+    ctx.fillStyle = '#fff';
+    ctx.strokeStyle = '#000';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(sp.x, sp.y, 3, 0, Math.PI * 2);
+    ctx.fill();
     ctx.stroke();
   }
 
   function drawMsg() {
     if (!state.msg) return;
     if (performance.now() > state.msgUntil) { state.msg = null; return; }
-    ctx.font = '28px "Major Mono Display", monospace';
+    ctx.font = '20px "Major Mono Display", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#000';
-    ctx.fillText(state.msg, W / 2, H / 2 - 60);
+    ctx.fillText(state.msg, W / 2, H / 2);
+  }
+
+  function drawLaunchHint() {
+    if (!state || !state.ball || !state.ball.stuck) return;
+    ctx.font = '10px "JetBrains Mono", monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    // sits just above the tube wall so the arrow points at the ball
+    ctx.fillText('DROP ▾', TUBE_X - 8, 26);
+    ctx.textAlign = 'center';
   }
 
   function draw() {
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, W, H);
-    drawStarField();
-    drawEnemies();
-    drawFragments();
-    drawParticles();
-    drawEnemyShots();
-    drawCovers();
-    drawPlayer();
-    drawShots();
-    drawGround();
+    drawTable();
+    drawSlings();
+    drawTargets();
+    drawSpinner();
+    drawBumpers();
+    drawFlippers();
+    drawBall();
     drawMsg();
+    drawLaunchHint();
   }
 
-  // ---- Overlay ----
+  function loop() {
+    if (!running) return;
+    step();
+    scheduleMetronome();
+    draw();
+    raf = requestAnimationFrame(loop);
+  }
+
+  function start() {
+    hideOverlay();
+    reset();
+    const ctx2 = ensureAudio();
+    if (ctx2 && ctx2.state === 'suspended') ctx2.resume();
+    if (ctx2) {
+      beatStart = ctx2.currentTime + 0.05;
+      nextStepIdx = 0;
+      lastVisualStep = -1;
+    }
+    updateHUD();
+    running = true;
+    raf = requestAnimationFrame(loop);
+  }
+
+  function stop() {
+    running = false;
+    if (raf) cancelAnimationFrame(raf);
+    raf = null;
+    input.left = false;
+    input.right = false;
+    touchSides.clear();
+  }
+
   function showOverlay(title, text, btnLabel) {
     overlayTitle.textContent = title;
     overlayText.innerHTML = text;
@@ -2753,48 +2969,21 @@ const SpaceSlicer = (() => {
     overlay.classList.remove('visible');
   }
 
-  // ---- Lifecycle ----
-  function loop() {
-    if (!running) return;
-    step();
-    draw();
-    raf = requestAnimationFrame(loop);
-  }
-
-  function start() {
-    hideOverlay();
-    reset();
-    const c = ensureAudio();
-    if (c && c.state === 'suspended') c.resume();
-    running = true;
-    lastT = 0;
-    raf = requestAnimationFrame(loop);
-  }
-
-  function stop() {
-    running = false;
-    if (raf) cancelAnimationFrame(raf);
-    raf = null;
-    input.left = false;
-    input.right = false;
-    input.mouseX = null;
-  }
-
   function init() {
-    setGameHeader('space slicer',
-      '<div class="hud-item"><div class="hud-label">WAVE</div><div class="hud-val" id="ssWave">1</div></div>' +
-      '<div class="hud-item"><div class="hud-label">SCORE</div><div class="hud-val" id="ssScore">0</div></div>' +
-      '<div class="hud-item"><div class="hud-label">LIVES</div><div class="hud-val" id="ssLives">●●●</div></div>');
-    waveEl = document.getElementById('ssWave');
-    scoreEl = document.getElementById('ssScore');
-    livesEl = document.getElementById('ssLives');
+    setGameHeader('pinball-808',
+      '<div class="hud-item"><div class="hud-label">KEY</div><div class="hud-val" id="pbKey">—</div></div>' +
+      '<div class="hud-item"><div class="hud-label">SCORE</div><div class="hud-val" id="pbScore">0</div></div>' +
+      '<div class="hud-item"><div class="hud-label">BALL</div><div class="hud-val" id="pbBalls">3</div></div>');
+    scoreEl = document.getElementById('pbScore');
+    ballsEl = document.getElementById('pbBalls');
+    keyEl = document.getElementById('pbKey');
     resizeCanvas();
     reset();
     draw();
-    showOverlay('space slicer',
-      'MOVE: ←→ / A·D / MOUSE / TAP<br>' +
-      'FIRE: SPACE / W / ↑ / CLICK / TAP<br>' +
-      'CUT THEM IN HALF · DON\'T LET THEM LAND',
+    showOverlay('pinball-808',
+      'A PINBALL THAT IS A DRUM MACHINE<br>' +
+      'KEEP THE BALL ALIVE — KEEP THE BEAT<br>' +
+      'Z / X · ARROWS · TAP HALVES · SPACE TO LAUNCH',
       'START');
   }
 
@@ -2803,15 +2992,14 @@ const SpaceSlicer = (() => {
   }
 
   window.addEventListener('resize', () => {
-    if (currentGame !== SpaceSlicer) return;
+    if (currentGame !== Pinball808) return;
     resizeCanvas();
     if (state) draw();
   });
 
-  Games.slicer = { init, stop, onOverlayClick };
-  return Games.slicer;
+  Games.pinball = { init, stop, onOverlayClick };
+  return Games.pinball;
 })();
-
 </script>
 
 </body>
